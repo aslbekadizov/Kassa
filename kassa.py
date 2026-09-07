@@ -2,7 +2,7 @@ import os
 import sqlite3
 from contextlib import closing
 from decimal import Decimal, InvalidOperation
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -40,6 +40,18 @@ TZ = ZoneInfo("Asia/Tashkent")
 
 CHOOSE_CURRENCY, INCOME_AMOUNT, EXCHANGE_USD, EXCHANGE_UZS = range(4)
 RESET_CONFIRM = 4
+CARD_EXPENSE = 5
+STATISTICS_PERIOD = 6
+
+CARD_BUTTON = "💳 Karta"
+CARD_EXPENSE_BUTTON = "💳 Kartadan"
+STATISTICS_BUTTON = "📊 Statistika"
+BACK_BUTTON = "⬅️ Asosiy menyu"
+STATISTICS_PERIODS = {
+    "📅 Bugun": ("today", "Bugun"),
+    "🗓 Shu oy": ("month", "Shu oy"),
+    "📋 Barcha vaqt": ("all", "Barcha vaqt"),
+}
 
 
 # =========================================================
@@ -49,6 +61,7 @@ RESET_CONFIRM = 4
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
         ["💰 Pul oldim", "💵 $ maydalash"],
+        [CARD_EXPENSE_BUTTON, STATISTICS_BUTTON],
     ],
     resize_keyboard=True
 )
@@ -56,6 +69,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
 CURRENCY_KEYBOARD = ReplyKeyboardMarkup(
     [
         ["🇺🇿 So'm", "🇺🇸 Dollar"],
+        [CARD_BUTTON],
         ["⬅️ Bekor qilish"],
     ],
     resize_keyboard=True
@@ -69,6 +83,11 @@ CANCEL_KEYBOARD = ReplyKeyboardMarkup(
 RESET_CONFIRM_TEXT = "✅ Ha, nolga tushirish"
 RESET_KEYBOARD = ReplyKeyboardMarkup(
     [[RESET_CONFIRM_TEXT], ["⬅️ Bekor qilish"]],
+    resize_keyboard=True
+)
+
+STATISTICS_KEYBOARD = ReplyKeyboardMarkup(
+    [["📅 Bugun", "🗓 Shu oy"], ["📋 Barcha vaqt"], [BACK_BUTTON]],
     resize_keyboard=True
 )
 
@@ -87,22 +106,31 @@ def init_db():
                 currency TEXT NOT NULL,
                 amount INTEGER NOT NULL,
                 note TEXT,
-                actor_id INTEGER
+                actor_id INTEGER,
+                account TEXT NOT NULL DEFAULT 'cash'
             )
         """)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(transactions)")}
+        if "account" not in columns:
+            # Eski operatsiyalar va qoldiqlar naqd hisobda saqlanadi.
+            conn.execute(
+                "ALTER TABLE transactions ADD COLUMN account TEXT NOT NULL DEFAULT 'cash'"
+            )
 
 
 def now_text():
     return datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def add_transaction(kind, currency, amount, note="", actor_id=None):
+def add_transaction(kind, currency, amount, note="", actor_id=None, account="cash"):
+    if account not in ("cash", "card") or (account == "card" and currency != "UZS"):
+        raise ValueError("Noto'g'ri hisob yoki valyuta")
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
         conn.execute(
             """
             INSERT INTO transactions
-            (created_at, kind, currency, amount, note, actor_id)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (created_at, kind, currency, amount, note, actor_id, account)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 now_text(),
@@ -110,8 +138,34 @@ def add_transaction(kind, currency, amount, note="", actor_id=None):
                 currency,
                 amount,
                 note,
-                actor_id
+                actor_id,
+                account
             )
+        )
+
+
+class InsufficientCardFunds(Exception):
+    def __init__(self, balance):
+        self.balance = balance
+        super().__init__("Kartadagi mablag' yetarli emas")
+
+
+def add_card_expense(amount, note, actor_id=None):
+    if amount <= 0:
+        raise ValueError("Summa musbat bo'lishi kerak")
+    with closing(sqlite3.connect(DB_PATH)) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        balance = conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) FROM transactions "
+            "WHERE currency = 'UZS' AND account = 'card'"
+        ).fetchone()[0]
+        if amount > balance:
+            raise InsufficientCardFunds(balance)
+        conn.execute(
+            "INSERT INTO transactions "
+            "(created_at, kind, currency, amount, note, actor_id, account) "
+            "VALUES (?, 'expense', 'UZS', ?, ?, ?, 'card')",
+            (now_text(), -amount, note, actor_id)
         )
 
 
@@ -150,15 +204,15 @@ def add_exchange(usd_cents, uzs_amount, actor_id=None):
         )
 
 
-def get_balance(currency):
+def get_balance(currency, account="cash"):
     with closing(sqlite3.connect(DB_PATH)) as conn:
         row = conn.execute(
             """
             SELECT COALESCE(SUM(amount), 0)
             FROM transactions
-            WHERE currency = ?
+            WHERE currency = ? AND account = ?
             """,
-            (currency,)
+            (currency, account)
         ).fetchone()
 
         return row[0]
@@ -168,13 +222,57 @@ def get_history(limit=10):
     with closing(sqlite3.connect(DB_PATH)) as conn:
         return conn.execute(
             """
-            SELECT created_at, kind, currency, amount, note
+            SELECT created_at, kind, currency, amount, note, account
             FROM transactions
             ORDER BY id DESC
             LIMIT ?
             """,
             (limit,)
         ).fetchall()
+
+
+def get_statistics(period="all", now=None):
+    now = (now or datetime.now(TZ)).astimezone(TZ)
+    conditions = "kind IN ('income', 'expense')"
+    params = []
+    if period in ("today", "month"):
+        begin = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        if period == "today":
+            end = begin + timedelta(days=1)
+        else:
+            begin = begin.replace(day=1)
+            end = (begin + timedelta(days=32)).replace(day=1)
+        conditions += " AND created_at >= ? AND created_at < ?"
+        params = [begin.strftime("%Y-%m-%d %H:%M:%S"), end.strftime("%Y-%m-%d %H:%M:%S")]
+    elif period != "all":
+        raise ValueError("Noto'g'ri davr")
+
+    totals = {
+        ("cash", "UZS"): {"income": 0, "expense": 0},
+        ("cash", "USD"): {"income": 0, "expense": 0},
+        ("card", "UZS"): {"income": 0, "expense": 0},
+    }
+    top_expenses = {}
+    with closing(sqlite3.connect(DB_PATH)) as conn, conn:
+        conn.execute("BEGIN")
+        for account, currency, kind, amount in conn.execute(
+            "SELECT account, currency, kind, SUM(amount) FROM transactions "
+            f"WHERE {conditions} GROUP BY account, currency, kind", params
+        ):
+            totals[(account, currency)][kind] = amount if kind == "income" else -amount
+
+        conn.create_function(
+            "expense_name", 1,
+            lambda note: " ".join((note or "").split()).casefold() or "Nomsiz"
+        )
+        for currency in ("UZS", "USD"):
+            top_expenses[currency] = conn.execute(
+                "SELECT expense_name(note) AS name, SUM(-amount) AS total, COUNT(*) "
+                f"FROM transactions WHERE {conditions} AND kind = 'expense' AND currency = ? "
+                "GROUP BY expense_name(note) ORDER BY total DESC, name ASC LIMIT 5",
+                [*params, currency]
+            ).fetchall()
+    return totals, top_expenses
 
 
 # =========================================================
@@ -231,7 +329,7 @@ def parse_uzs(text):
 
     value = int(cleaned)
 
-    if value <= 0:
+    if value <= 0 or value > 9223372036854775807:
         raise ValueError
 
     return value
@@ -290,16 +388,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"Telegram ID: {update.effective_user.id}"
         )
-        return
+        return ConversationHandler.END
+
+    context.chat_data.clear()
 
     await update.message.reply_text(
         "💼 Kassa bot\n\n"
         "Kerakli amalni tanlang:\n\n"
         "/hisob — qoldiq\n"
         "/tarix — oxirgi operatsiyalar\n"
+        "/statistika — kirim va xarajat statistikasi\n"
         "/reset — qoldiq va tarixni nolga tushirish",
         reply_markup=MAIN_KEYBOARD
     )
+    return ConversationHandler.END
 
 
 async def get_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -320,8 +422,9 @@ async def income_start(
     if await reject_if_not_cashier(update):
         return ConversationHandler.END
 
+    context.chat_data.clear()
     await update.message.reply_text(
-        "Qaysi valyutada pul oldingiz?",
+        "Pulni qaysi hisobga oldingiz?",
         reply_markup=CURRENCY_KEYBOARD
     )
 
@@ -335,7 +438,8 @@ async def choose_currency(
     text = update.message.text
 
     if text == "🇺🇿 So'm":
-        context.user_data["income_currency"] = "UZS"
+        context.chat_data["income_currency"] = "UZS"
+        context.chat_data["income_account"] = "cash"
 
         await update.message.reply_text(
             "💰 Necha so'm oldingiz?\n\n"
@@ -347,7 +451,8 @@ async def choose_currency(
         return INCOME_AMOUNT
 
     elif text == "🇺🇸 Dollar":
-        context.user_data["income_currency"] = "USD"
+        context.chat_data["income_currency"] = "USD"
+        context.chat_data["income_account"] = "cash"
 
         await update.message.reply_text(
             "💵 Necha dollar oldingiz?\n\n"
@@ -358,12 +463,24 @@ async def choose_currency(
 
         return INCOME_AMOUNT
 
+    elif text == CARD_BUTTON:
+        context.chat_data["income_currency"] = "UZS"
+        context.chat_data["income_account"] = "card"
+        await update.message.reply_text(
+            "💳 Kartaga necha so'm tushdi?\n\nMasalan: 500000",
+            reply_markup=CANCEL_KEYBOARD
+        )
+        return INCOME_AMOUNT
+
 
 async def income_amount(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-    currency = context.user_data.get("income_currency")
+    if await reject_if_not_cashier(update):
+        return ConversationHandler.END
+    currency = context.chat_data.get("income_currency")
+    account = context.chat_data.get("income_account", "cash")
 
     try:
 
@@ -375,16 +492,18 @@ async def income_amount(
                 "income",
                 "UZS",
                 amount,
-                "Pul olindi",
-                update.effective_user.id
+                "Kartaga pul olindi" if account == "card" else "Pul olindi",
+                update.effective_user.id,
+                account=account
             )
 
-            balance = get_balance("UZS")
+            balance = get_balance("UZS", account=account)
+            label = "💳 Karta qoldiq" if account == "card" else "💰 Naqd so'm qoldiq"
 
             await update.message.reply_text(
                 "✅ Pul qabul qilindi\n\n"
                 f"➕ {format_uzs(amount)} so'm\n"
-                f"💰 So'm qoldiq: "
+                f"{label}: "
                 f"{format_uzs(balance)} so'm",
                 reply_markup=MAIN_KEYBOARD
             )
@@ -411,7 +530,7 @@ async def income_amount(
                 reply_markup=MAIN_KEYBOARD
             )
 
-        context.user_data.clear()
+        context.chat_data.clear()
 
         return ConversationHandler.END
 
@@ -436,6 +555,7 @@ async def exchange_start(
     if await reject_if_not_cashier(update):
         return ConversationHandler.END
 
+    context.chat_data.clear()
     usd_balance = get_balance("USD")
 
     await update.message.reply_text(
@@ -467,7 +587,7 @@ async def exchange_usd(
 
             return EXCHANGE_USD
 
-        context.user_data["exchange_usd"] = amount
+        context.chat_data["exchange_usd"] = amount
 
         await update.message.reply_text(
             f"💵 Maydalanmoqda: "
@@ -497,7 +617,7 @@ async def exchange_uzs(
 
         uzs_amount = parse_uzs(update.message.text)
 
-        usd_amount = context.user_data["exchange_usd"]
+        usd_amount = context.chat_data["exchange_usd"]
 
         add_exchange(
             usd_amount,
@@ -524,7 +644,7 @@ async def exchange_uzs(
             reply_markup=MAIN_KEYBOARD
         )
 
-        context.user_data.clear()
+        context.chat_data.clear()
 
         return ConversationHandler.END
 
@@ -542,106 +662,116 @@ async def exchange_uzs(
 # XARAJAT
 # =========================================================
 
-async def expense(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+def parse_expense_text(text):
+    parts = text.strip().rsplit(maxsplit=1)
+    if len(parts) != 2:
+        raise ValueError
+    name = " ".join(parts[0].split())
+    if not name or len(name) > 200:
+        raise ValueError
+    return name, parse_uzs(parts[1])
+
+
+async def card_expense_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_not_cashier(update):
-        return
+        return ConversationHandler.END
+    context.chat_data.clear()
+    await update.message.reply_text(
+        "💳 Kartadan xarajat\n\n"
+        f"Karta qoldiq: {format_uzs(get_balance('UZS', 'card'))} so'm\n\n"
+        "O'tkazmani amalga oshirgach, kimga yoki nima uchun "
+        "va qancha yuborganingizni yozing.\n\n"
+        "Masalan: Ali 200000",
+        reply_markup=CANCEL_KEYBOARD
+    )
+    return CARD_EXPENSE
 
-    text = update.message.text.strip()
 
-    # Menyu tugmalarini xarajat deb qabul qilmaslik
-    if text in [
-        "💰 Pul oldim",
-        "💵 $ maydalash",
-        "⬅️ Bekor qilish",
-        "🇺🇿 So'm",
-        "🇺🇸 Dollar"
-    ]:
+async def card_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await record_expense(update, context, account="card")
+
+
+async def expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text.strip() in {
+        "💰 Pul oldim", "💵 $ maydalash", "⬅️ Bekor qilish",
+        "🇺🇿 So'm", "🇺🇸 Dollar", CARD_BUTTON, CARD_EXPENSE_BUTTON,
+        STATISTICS_BUTTON, BACK_BUTTON, RESET_CONFIRM_TEXT, *STATISTICS_PERIODS,
+    }:
         return
+    return await record_expense(update, context, account="cash")
+
+
+async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, account):
+    if await reject_if_not_cashier(update):
+        return ConversationHandler.END
+    retry_state = CARD_EXPENSE if account == "card" else ConversationHandler.END
+    try:
+        name, amount = parse_expense_text(update.message.text)
+    except (ValueError, InvalidOperation):
+        await update.message.reply_text(
+            "❌ Kimga yoki nima uchun va summani yozing:\n\n"
+            "Ali 200000\nbenzin 150000\nusta 500000\n\n"
+            "Izoh 200 belgidan oshmasin.",
+            reply_markup=CANCEL_KEYBOARD if account == "card" else MAIN_KEYBOARD
+        )
+        return retry_state
 
     try:
-        # Masalan:
-        # abet 200000
-        # benzin 150000
-        # usta uchun 500000
-
-        parts = text.rsplit(maxsplit=1)
-
-        if len(parts) != 2:
-            raise ValueError
-
-        name = parts[0].strip()
-        amount = parse_uzs(parts[1])
-
-        if not name:
-            raise ValueError
-
-    except (ValueError, InvalidOperation):
-
+        if account == "card":
+            add_card_expense(amount, name, update.effective_user.id)
+        else:
+            add_transaction("expense", "UZS", -amount, name, update.effective_user.id)
+    except InsufficientCardFunds as exc:
         await update.message.reply_text(
-            "❌ Xarajatni quyidagicha yozing:\n\n"
-            "abet 200000\n"
-            "benzin 150000\n"
-            "usta 500000"
+            "❌ Kartadagi mablag' yetarli emas.\n"
+            f"Karta qoldiq: {format_uzs(exc.balance)} so'm\n\n"
+            "Summani tekshiring yoki amalni bekor qiling.",
+            reply_markup=CANCEL_KEYBOARD
         )
+        return CARD_EXPENSE
+    except (sqlite3.Error, OSError) as exc:
+        print("Xarajatni saqlashda xato:", exc)
+        await update.message.reply_text(
+            "❌ Xarajat saqlanmadi. Qayta urinib ko'ring.",
+            reply_markup=CANCEL_KEYBOARD if account == "card" else MAIN_KEYBOARD
+        )
+        return retry_state
 
-        return
-
-    # Xarajatni bazaga yozamiz
-    add_transaction(
-        "expense",
-        "UZS",
-        -amount,
-        name,
-        update.effective_user.id
-    )
-
+    context.chat_data.clear()
     uzs_balance = get_balance("UZS")
     usd_balance = get_balance("USD")
-
+    card_balance = get_balance("UZS", "card")
+    account_label = "💳 Karta" if account == "card" else "💰 Naqd so'm"
+    account_balance = card_balance if account == "card" else uzs_balance
     await update.message.reply_text(
         "🔴 Xarajat yozildi\n\n"
         f"📝 {name}\n"
+        f"Manba: {account_label}\n"
         f"➖ {format_uzs(amount)} so'm\n\n"
-        f"🇺🇿 Qoldiq: "
-        f"{format_uzs(uzs_balance)} so'm",
+        f"{account_label} qoldiq: {format_uzs(account_balance)} so'm",
         reply_markup=MAIN_KEYBOARD
     )
-
-    # =====================================================
-    # BOSHQA ODAMGA XABAR
-    # =====================================================
-
-    cashier_name = update.effective_user.full_name
 
     report_text = (
         "🔴 YANGI XARAJAT\n\n"
         f"📝 Xarajat: {name}\n"
+        f"Manba: {account_label}\n"
         f"💰 Summa: {format_uzs(amount)} so'm\n\n"
-        f"🇺🇿 So'm qoldiq: "
-        f"{format_uzs(uzs_balance)} so'm\n"
-        f"💵 Dollar qoldiq: "
-        f"{format_usd(usd_balance)}\n\n"
-        f"👤 Kassir: {cashier_name}\n"
+        f"🇺🇿 Naqd so'm qoldiq: {format_uzs(uzs_balance)} so'm\n"
+        f"💵 Dollar qoldiq: {format_usd(usd_balance)}\n"
+        f"💳 Karta qoldiq: {format_uzs(card_balance)} so'm\n\n"
+        f"👤 Kassir: {update.effective_user.full_name}\n"
         f"🕐 {now_text()}"
     )
-
     try:
-        await context.bot.send_message(
-            chat_id=REPORT_CHAT_ID,
-            text=report_text
-        )
-
-    except TelegramError as e:
+        await context.bot.send_message(chat_id=REPORT_CHAT_ID, text=report_text)
+    except TelegramError as exc:
         await update.message.reply_text(
-            "⚠️ Xarajat saqlandi, lekin "
-            "hisobot boshqa odamga yuborilmadi.\n\n"
+            "⚠️ Xarajat saqlandi, lekin hisobot boshqa odamga yuborilmadi.\n\n"
             "U odam botga /start bosganini tekshiring."
         )
-
-        print("Telegram xato:", e)
+        print("Telegram xato:", exc)
+    return ConversationHandler.END
 
 
 # =========================================================
@@ -653,17 +783,85 @@ async def balance(
     context: ContextTypes.DEFAULT_TYPE
 ):
     if await reject_if_not_cashier(update):
-        return
+        return ConversationHandler.END
 
+    context.chat_data.clear()
     uzs = get_balance("UZS")
     usd = get_balance("USD")
+    card = get_balance("UZS", "card")
 
     await update.message.reply_text(
         "💼 KASSA HOLATI\n\n"
-        f"🇺🇿 So'm: {format_uzs(uzs)} so'm\n"
-        f"💵 Dollar: {format_usd(usd)}",
+        f"🇺🇿 Naqd so'm: {format_uzs(uzs)} so'm\n"
+        f"💵 Dollar: {format_usd(usd)}\n"
+        f"💳 Karta: {format_uzs(card)} so'm",
         reply_markup=MAIN_KEYBOARD
     )
+    return ConversationHandler.END
+
+
+# =========================================================
+# STATISTIKA
+# =========================================================
+
+async def statistics_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await reject_if_not_cashier(update):
+        return ConversationHandler.END
+    context.chat_data.clear()
+    return await show_statistics(update, "all", "Barcha vaqt")
+
+
+async def statistics_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await reject_if_not_cashier(update):
+        return ConversationHandler.END
+    selection = STATISTICS_PERIODS.get(update.message.text)
+    if selection is None:
+        await update.message.reply_text(
+            "Statistika davrini tanlang yoki asosiy menyuga qayting.",
+            reply_markup=STATISTICS_KEYBOARD
+        )
+        return STATISTICS_PERIOD
+    return await show_statistics(update, *selection)
+
+
+async def show_statistics(update: Update, period, label):
+    totals, top_expenses = get_statistics(period)
+    cash = totals[("cash", "UZS")]
+    card = totals[("card", "UZS")]
+    usd = totals[("cash", "USD")]
+    income_uzs = cash["income"] + card["income"]
+    expense_uzs = cash["expense"] + card["expense"]
+    lines = [
+        f"📊 STATISTIKA — {label}",
+        "Davr: Toshkent vaqti bo'yicha\n",
+        "🟢 PUL OLDIM",
+        f"Naqd so'm: {format_uzs(cash['income'])} so'm",
+        f"Karta: {format_uzs(card['income'])} so'm",
+        f"Jami so'm: {format_uzs(income_uzs)} so'm",
+        f"Dollar: {format_usd(usd['income'])}\n",
+        "🔴 XARAJATLAR",
+        f"Naqd so'm: {format_uzs(cash['expense'])} so'm",
+        f"Karta: {format_uzs(card['expense'])} so'm",
+        f"Jami so'm: {format_uzs(expense_uzs)} so'm",
+        f"Dollar: {format_usd(usd['expense'])}\n",
+        "🔄 AYLANMA (kirim + xarajat)",
+        f"So'm: {format_uzs(income_uzs + expense_uzs)} so'm",
+        f"Dollar: {format_usd(usd['income'] + usd['expense'])}\n",
+        "🏆 ENG KO'P XARAJAT — TOP 5",
+    ]
+    if not any(top_expenses.values()):
+        lines.append("Bu davrda xarajat yo'q.")
+    for currency, rows in top_expenses.items():
+        if not rows:
+            continue
+        lines.append("So'm (naqd + karta):" if currency == "UZS" else "Dollar:")
+        for index, (name, amount, count) in enumerate(rows, 1):
+            name = name if len(name) <= 60 else name[:57] + "..."
+            amount_text = f"{format_uzs(amount)} so'm" if currency == "UZS" else format_usd(amount)
+            lines.append(f"{index}. {name}: {amount_text} ({count} ta)")
+    lines.append("\nDollar maydalash kirim va xarajatga qo'shilmaydi.")
+    await update.message.reply_text("\n".join(lines), reply_markup=STATISTICS_KEYBOARD)
+    return STATISTICS_PERIOD
 
 
 # =========================================================
@@ -675,19 +873,21 @@ async def history(
     context: ContextTypes.DEFAULT_TYPE
 ):
     if await reject_if_not_cashier(update):
-        return
+        return ConversationHandler.END
 
+    context.chat_data.clear()
     rows = get_history(10)
 
     if not rows:
         await update.message.reply_text(
-            "Hozircha operatsiyalar yo'q."
+            "Hozircha operatsiyalar yo'q.",
+            reply_markup=MAIN_KEYBOARD
         )
-        return
+        return ConversationHandler.END
 
     lines = ["📋 OXIRGI 10 TA OPERATSIYA\n"]
 
-    for created_at, kind, currency, amount, note in rows:
+    for created_at, kind, currency, amount, note, account in rows:
 
         if kind == "income":
             icon = "🟢"
@@ -712,13 +912,15 @@ async def history(
 
         lines.append(
             f"{icon} {note}\n"
+            f"{'💳 Karta' if account == 'card' else '💵 Naqd'}\n"
             f"{sign}{amount_text}\n"
             f"{created_at}\n"
         )
 
     await update.message.reply_text(
-        "\n".join(lines)
+        "\n".join(lines), reply_markup=MAIN_KEYBOARD
     )
+    return ConversationHandler.END
 
 
 # =========================================================
@@ -729,10 +931,10 @@ async def reset_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_not_cashier(update):
         return ConversationHandler.END
 
-    context.user_data.clear()
+    context.chat_data.clear()
     await update.message.reply_text(
         "⚠️ Kassani nolga tushirish\n\n"
-        "So'm va dollar qoldiqlari 0 bo'ladi. "
+        "Naqd so'm, dollar va karta qoldiqlari 0 bo'ladi. "
         "Barcha kirim, xarajat va dollar maydalash tarixi tozalanadi.\n\n"
         "Tozalashdan oldin zaxira nusxasi saqlanadi.\n\n"
         "Tasdiqlaysizmi?",
@@ -764,11 +966,12 @@ async def reset_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return RESET_CONFIRM
 
-    context.user_data.clear()
+    context.chat_data.clear()
     await update.message.reply_text(
         "✅ Kassa nolga tushirildi.\n\n"
         "🇺🇿 So'm: 0 so'm\n"
         "💵 Dollar: $0\n"
+        "💳 Karta: 0 so'm\n"
         "📋 Operatsiyalar tarixi tozalandi.\n\n"
         "Zaxira nusxasi saqlandi. Endi yangidan boshlashingiz mumkin.",
         reply_markup=MAIN_KEYBOARD
@@ -784,7 +987,7 @@ async def cancel(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-    context.user_data.clear()
+    context.chat_data.clear()
 
     await update.message.reply_text(
         "❌ Amal bekor qilindi.",
@@ -816,7 +1019,15 @@ def main():
     conversation = ConversationHandler(
 
         entry_points=[
+            CommandHandler("start", start),
+            CommandHandler("hisob", balance),
+            CommandHandler("tarix", history),
+            CommandHandler(["statistika", "stats"], statistics_start),
+            CommandHandler("kartadan", card_expense_start),
             CommandHandler("reset", reset_start),
+            MessageHandler(filters.Regex("^💳 Kartadan$"), card_expense_start),
+            MessageHandler(filters.Regex("^📊 Statistika$"), statistics_start),
+            MessageHandler(filters.Regex("^⬅️ Asosiy menyu$"), start),
             MessageHandler(
                 filters.Regex("^💰 Pul oldim$"),
                 income_start
@@ -829,6 +1040,16 @@ def main():
         ],
 
         states={
+
+            CARD_EXPENSE: [
+                MessageHandler(filters.Regex("^⬅️ Bekor qilish$"), cancel),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, card_expense),
+            ],
+
+            STATISTICS_PERIOD: [
+                MessageHandler(filters.Regex("^⬅️ Bekor qilish$"), cancel),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, statistics_period),
+            ],
 
             RESET_CONFIRM: [
                 MessageHandler(
@@ -848,7 +1069,7 @@ def main():
                 ),
                 MessageHandler(
                     filters.Regex(
-                        r"^(🇺🇿 So'm|🇺🇸 Dollar)$"
+                        r"^(🇺🇿 So'm|🇺🇸 Dollar|💳 Karta)$"
                     ),
                     choose_currency
                 ),
@@ -892,12 +1113,10 @@ def main():
             CommandHandler("reset", reset_start),
             CommandHandler("cancel", cancel)
         ],
+        allow_reentry=True,
     )
 
-    app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("id", get_id))
-    app.add_handler(CommandHandler("hisob", balance))
-    app.add_handler(CommandHandler("tarix", history))
 
     app.add_handler(conversation)
 
