@@ -18,7 +18,7 @@ chmod 600 .env
 
 - `BOT_TOKEN` — BotFather bergan bot tokeni.
 - `CASHIER_ID` — kassirning Telegram ID raqami.
-- `REPORT_CHAT_ID` — xarajat hisobotini oladigan odamning Telegram ID raqami.
+- `REPORT_CHAT_ID` — kirim va xarajat xabarlarini oladigan odamning Telegram ID raqami.
 
 ```sh
 sh run.sh
@@ -55,7 +55,14 @@ Karta hisobi so'mda yuritiladi. O'tkazmani bank ilovangizda bajarasiz, keyin bot
 
 Kartadagi mablag' yetarli bo'lmasa, xarajat yozilmaydi. Har bir karta xarajati uchun
 `💳 Kartadan` tugmasini bosing. Saqlangandan keyin bot asosiy menyuga qaytadi.
-Xarajat hisobotida to'lov manbasi va uchala hisob qoldig'i ko'rsatiladi.
+Hisobotni oladigan odamga har bir kirim va xarajat alohida yuboriladi.
+Xabarda hisob turi (naqd so'm, dollar yoki karta), summa, vaqt va xarajat bo'lsa izohi ko'rsatiladi.
+Qoldiqlar, statistika, tarix, dollar maydalash va reset haqidagi xabarlar unga yuborilmaydi.
+Kassa amallari va to'liq hisobotlar faqat `CASHIER_ID` dagi kassir uchun ochiq.
+
+Qabul qiluvchini almashtirish uchun serverdagi `.env` faylida `REPORT_CHAT_ID` ni yangilab,
+botni qayta ishga tushiring. Yangi qabul qiluvchi botga `/start` yuborgan bo'lishi kerak.
+Xabar yetib bormasa, operatsiya bazada saqlanadi va kassirga bu haqda bildiriladi.
 
 ## Statistika
 

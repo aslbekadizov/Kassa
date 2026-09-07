@@ -21,6 +21,7 @@ class FakeTelegramRequest(BaseRequest):
     def __init__(self):
         self.messages = []
         self.sent = []
+        self.fail_chat_ids = set()
 
     @property
     def read_timeout(self):
@@ -42,6 +43,11 @@ class FakeTelegramRequest(BaseRequest):
         elif action == "sendMessage":
             params = request_data.parameters
             assert len(params["text"].encode("utf-16-le")) // 2 <= 4096
+            if params["chat_id"] in self.fail_chat_ids:
+                return 403, json.dumps({
+                    "ok": False, "error_code": 403,
+                    "description": "Forbidden: bot was blocked by the user",
+                }).encode()
             self.sent.append(params)
             self.messages.append(params["text"])
             result = {
@@ -218,7 +224,8 @@ class CardAndStatisticsTests(BotTestCase):
         await self.card_income(500000)
         self.assertEqual(kassa.get_balance("UZS", "card"), 500000)
         self.assertEqual((kassa.get_balance("UZS"), kassa.get_balance("USD")), before)
-        self.assertIn("Karta qoldiq: 500 000", self.request.messages[-1])
+        cashier_messages = [m["text"] for m in self.request.sent if m["chat_id"] == kassa.CASHIER_ID]
+        self.assertIn("Karta qoldiq: 500 000", cashier_messages[-1])
         await self.send("💰 Pul oldim")
         await self.send("🇺🇿 So'm")
         await self.send("100000")
@@ -262,12 +269,12 @@ class CardAndStatisticsTests(BotTestCase):
         self.assertEqual(kassa.get_balance("USD"), 10000)
         report = self.request.sent[-1]
         self.assertEqual(report["chat_id"], kassa.REPORT_CHAT_ID)
-        self.assertIn("Manba: 💳 Karta", report["text"])
-        self.assertIn("Karta qoldiq: 300 000", report["text"])
+        self.assertIn("Hisob: 💳 Karta", report["text"])
+        self.assertNotIn("qoldiq", report["text"].lower())
         await self.send("benzin 150000")
         self.assertEqual(kassa.get_balance("UZS"), cash_before - 150000)
         self.assertEqual(kassa.get_balance("UZS", "card"), 300000)
-        self.assertIn("Manba: 💰 Naqd so'm", self.request.messages[-1])
+        self.assertIn("Hisob: 💰 Naqd so'm", self.request.messages[-1])
 
     async def test_cash_cannot_cover_missing_card_funds(self):
         await self.send("/kartadan")
@@ -399,6 +406,85 @@ class CardAndStatisticsTests(BotTestCase):
             self.assertEqual(totals[("card", "UZS")]["income"], expected)
             self.assertEqual(totals[("cash", "UZS")]["expense"], expected)
             self.assertEqual(top["UZS"][0][1], expected)
+
+
+class NotificationTests(BotTestCase):
+    def reports(self):
+        return [m["text"] for m in self.request.sent if m["chat_id"] == kassa.REPORT_CHAT_ID]
+
+    async def test_all_income_accounts_send_only_transaction_details(self):
+        cases = [
+            ("🇺🇿 So'm", "500000", "💰 Naqd so'm", "500 000 so'm"),
+            ("🇺🇸 Dollar", "100.50", "💵 Naqd dollar", "$100.50"),
+            (kassa.CARD_BUTTON, "300000", "💳 Karta", "300 000 so'm"),
+        ]
+        with patch.object(kassa, "now_text", return_value="2026-09-07 15:00:00"):
+            for button, amount, account, amount_text in cases:
+                await self.send("💰 Pul oldim")
+                await self.send(button)
+                await self.send(amount)
+                self.assertEqual(
+                    self.reports()[-1],
+                    f"🟢 YANGI KIRIM\n\nHisob: {account}\n"
+                    f"➕ {amount_text}\n🕐 2026-09-07 15:00:00"
+                )
+        self.assertEqual(len(self.reports()), 3)
+        self.assertEqual(len(self.rows(self.db_path)), len(self.original_rows) + 3)
+
+    async def test_cash_and_card_expenses_report_without_balances(self):
+        kassa.add_transaction("income", "UZS", 500000, account="card")
+        with patch.object(kassa, "now_text", return_value="2026-09-07 15:00:00"):
+            await self.send("benzin 150000")
+            await self.send(kassa.CARD_EXPENSE_BUTTON)
+            await self.send("Ali 200000")
+        self.assertEqual(self.reports(), [
+            "🔴 YANGI XARAJAT\n\nHisob: 💰 Naqd so'm\n"
+            "📝 benzin\n➖ 150 000 so'm\n🕐 2026-09-07 15:00:00",
+            "🔴 YANGI XARAJAT\n\nHisob: 💳 Karta\n"
+            "📝 Ali\n➖ 200 000 so'm\n🕐 2026-09-07 15:00:00",
+        ])
+
+    async def test_exchange_statistics_history_and_reset_do_not_send_reports(self):
+        for text in ("/start", "/hisob", "/tarix", "/statistika", kassa.BACK_BUTTON, "/id"):
+            await self.send(text)
+        await self.send("💵 $ maydalash")
+        await self.send("10")
+        await self.send("120000")
+        await self.send("/reset")
+        await self.send(kassa.RESET_CONFIRM_TEXT)
+        self.assertEqual(self.reports(), [])
+
+    async def test_invalid_cancelled_and_insufficient_transactions_do_not_report(self):
+        await self.send("💰 Pul oldim")
+        await self.send(kassa.CARD_BUTTON)
+        await self.send("0")
+        await self.send("/cancel")
+        await self.send("benzin")
+        await self.send(kassa.CARD_EXPENSE_BUTTON)
+        await self.send("Ali 200000")
+        await self.send("⬅️ Bekor qilish")
+        self.assertEqual(self.rows(self.db_path), self.original_rows)
+        self.assertEqual(self.reports(), [])
+
+    async def test_report_failure_keeps_income_and_allows_next_operation(self):
+        self.request.fail_chat_ids.add(kassa.REPORT_CHAT_ID)
+        before = kassa.get_balance("UZS")
+        await self.send("💰 Pul oldim")
+        await self.send("🇺🇿 So'm")
+        await self.send("500000")
+        self.assertEqual(kassa.get_balance("UZS"), before + 500000)
+        self.assertIn("Kirim saqlandi", self.request.messages[-1])
+        await self.send("benzin 150000")
+        self.assertEqual(kassa.get_balance("UZS"), before + 350000)
+        self.assertIn("Xarajat saqlandi", self.request.messages[-1])
+        self.assertEqual(len(self.rows(self.db_path)), len(self.original_rows) + 2)
+        self.assertEqual(self.reports(), [])
+
+    async def test_report_recipient_cannot_view_private_accounts_or_make_changes(self):
+        for command in ("/hisob", "/tarix", "/statistika", "/reset", "💰 Pul oldim", "/kartadan"):
+            await self.send(command, actor_id=kassa.REPORT_CHAT_ID)
+            self.assertIn("faqat kassir", self.request.messages[-1])
+        self.assertEqual(self.rows(self.db_path), self.original_rows)
 
 
 class MigrationTests(unittest.TestCase):

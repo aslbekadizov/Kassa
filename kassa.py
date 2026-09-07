@@ -26,7 +26,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 # Kassirning Telegram ID raqami
 CASHIER_ID = int(os.environ.get("CASHIER_ID", "0"))
 
-# Xarajatlar boradigan odamning Telegram ID raqami
+# Kirim va xarajat xabarlari boradigan odamning Telegram ID raqami
 REPORT_CHAT_ID = int(os.environ.get("REPORT_CHAT_ID", "0"))
 
 DB_PATH = Path(__file__).with_name("kassa.db")
@@ -412,6 +412,43 @@ async def get_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
+# KIRIM VA XARAJAT XABARLARI
+# =========================================================
+
+async def send_transaction_report(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    kind,
+    currency,
+    amount,
+    account="cash",
+    note="",
+):
+    if kind not in ("income", "expense"):
+        return
+
+    title = "🟢 YANGI KIRIM" if kind == "income" else "🔴 YANGI XARAJAT"
+    sign = "➕" if kind == "income" else "➖"
+    account_label = "💳 Karta" if account == "card" else "💵 Naqd dollar" if currency == "USD" else "💰 Naqd so'm"
+    amount_text = format_usd(amount) if currency == "USD" else f"{format_uzs(amount)} so'm"
+    lines = [title, "", f"Hisob: {account_label}"]
+    if note:
+        lines.append(f"📝 {note}")
+    lines.extend([f"{sign} {amount_text}", f"🕐 {now_text()}"])
+
+    try:
+        await context.bot.send_message(chat_id=REPORT_CHAT_ID, text="\n".join(lines))
+    except TelegramError as exc:
+        operation = "Kirim" if kind == "income" else "Xarajat"
+        await update.message.reply_text(
+            f"⚠️ {operation} saqlandi, lekin hisobot boshqa odamga yuborilmadi.\n\n"
+            "U odam botga /start bosganini va REPORT_CHAT_ID to'g'riligini tekshiring.",
+            reply_markup=MAIN_KEYBOARD
+        )
+        print("Hisobotni yuborishda xato:", type(exc).__name__)
+
+
+# =========================================================
 # PUL OLDIM
 # =========================================================
 
@@ -531,7 +568,9 @@ async def income_amount(
             )
 
         context.chat_data.clear()
-
+        await send_transaction_report(
+            update, context, "income", currency, amount, account=account
+        )
         return ConversationHandler.END
 
     except (ValueError, InvalidOperation):
@@ -738,11 +777,8 @@ async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, acc
         return retry_state
 
     context.chat_data.clear()
-    uzs_balance = get_balance("UZS")
-    usd_balance = get_balance("USD")
-    card_balance = get_balance("UZS", "card")
     account_label = "💳 Karta" if account == "card" else "💰 Naqd so'm"
-    account_balance = card_balance if account == "card" else uzs_balance
+    account_balance = get_balance("UZS", account)
     await update.message.reply_text(
         "🔴 Xarajat yozildi\n\n"
         f"📝 {name}\n"
@@ -752,25 +788,9 @@ async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, acc
         reply_markup=MAIN_KEYBOARD
     )
 
-    report_text = (
-        "🔴 YANGI XARAJAT\n\n"
-        f"📝 Xarajat: {name}\n"
-        f"Manba: {account_label}\n"
-        f"💰 Summa: {format_uzs(amount)} so'm\n\n"
-        f"🇺🇿 Naqd so'm qoldiq: {format_uzs(uzs_balance)} so'm\n"
-        f"💵 Dollar qoldiq: {format_usd(usd_balance)}\n"
-        f"💳 Karta qoldiq: {format_uzs(card_balance)} so'm\n\n"
-        f"👤 Kassir: {update.effective_user.full_name}\n"
-        f"🕐 {now_text()}"
+    await send_transaction_report(
+        update, context, "expense", "UZS", amount, account=account, note=name
     )
-    try:
-        await context.bot.send_message(chat_id=REPORT_CHAT_ID, text=report_text)
-    except TelegramError as exc:
-        await update.message.reply_text(
-            "⚠️ Xarajat saqlandi, lekin hisobot boshqa odamga yuborilmadi.\n\n"
-            "U odam botga /start bosganini tekshiring."
-        )
-        print("Telegram xato:", exc)
     return ConversationHandler.END
 
 
