@@ -408,6 +408,82 @@ class CardAndStatisticsTests(BotTestCase):
             self.assertEqual(top["UZS"][0][1], expected)
 
 
+class DollarExpenseTests(BotTestCase):
+    async def test_dollar_expense_debits_only_dollars_and_updates_reports_and_statistics(self):
+        kassa.add_transaction("income", "USD", 50000)
+        kassa.add_transaction("income", "UZS", 200000, account="card")
+        cash_before = kassa.get_balance("UZS")
+        await self.send("Furnituraga 300$")
+        self.assertEqual(kassa.get_balance("USD"), 30000)
+        self.assertEqual(kassa.get_balance("UZS"), cash_before)
+        self.assertEqual(kassa.get_balance("UZS", "card"), 200000)
+        latest = kassa.get_history()[0]
+        self.assertEqual(latest[1:], ("expense", "USD", -30000, "Furnituraga", "cash"))
+        confirmation, report = self.request.sent[-2:]
+        self.assertEqual(confirmation["chat_id"], kassa.CASHIER_ID)
+        self.assertIn("Naqd dollar qoldiq: $300", confirmation["text"])
+        self.assertEqual(report["chat_id"], kassa.REPORT_CHAT_ID)
+        self.assertIn("Hisob: 💵 Naqd dollar", report["text"])
+        self.assertIn("➖ $300", report["text"])
+        self.assertNotIn("qoldiq", report["text"].lower())
+        totals, top = kassa.get_statistics()
+        self.assertEqual(totals[("cash", "USD")]["expense"], 30000)
+        self.assertEqual(totals[("cash", "UZS")]["expense"], 100000)
+        self.assertEqual(top["USD"], [("furnituraga", 30000, 1)])
+        await self.send("/tarix")
+        self.assertIn("-$300", self.request.messages[-1])
+
+    async def test_decimal_dollar_expenses_and_space_before_symbol_keep_exact_cents(self):
+        before = kassa.get_balance("USD")
+        cases = [("Furnituraga 12.50$", 1250), ("Usta 12,50 $", 1250), ("Mix 0.01$  ", 1)]
+        spent = 0
+        for text, cents in cases:
+            await self.send(text)
+            spent += cents
+            self.assertEqual(kassa.get_balance("USD"), before - spent)
+            self.assertEqual(kassa.get_history()[0][3], -cents)
+        self.assertEqual(kassa.get_balance("UZS"), 1600000)
+
+    async def test_invalid_dollar_amounts_neither_write_nor_send_reports(self):
+        for amount in ("0", "-5", "0.001", "300.005", "NaN", "Infinity", "1e3", "92233720368547758.08"):
+            await self.send(f"Furnituraga {amount}$")
+            self.assertEqual(self.rows(self.db_path), self.original_rows)
+        await self.send("Furnituraga $")
+        await self.send("300$")
+        self.assertEqual(self.rows(self.db_path), self.original_rows)
+        self.assertFalse(any(m["chat_id"] == kassa.REPORT_CHAT_ID for m in self.request.sent))
+
+    async def test_card_mode_rejects_dollars_without_changing_any_balance(self):
+        kassa.add_transaction("income", "UZS", 500000, account="card")
+        before = self.rows(self.db_path)
+        await self.send(kassa.CARD_EXPENSE_BUTTON)
+        await self.send("Furnituraga 50$")
+        self.assertEqual(self.rows(self.db_path), before)
+        self.assertIn("Karta hisobi so'mda", self.request.messages[-1])
+        self.assertFalse(any(m["chat_id"] == kassa.REPORT_CHAT_ID for m in self.request.sent))
+        await self.send("Ali 150000")
+        self.assertEqual(kassa.get_balance("UZS", "card"), 350000)
+        self.assertEqual(kassa.get_balance("USD"), 10000)
+
+    async def test_expense_without_dollar_symbol_still_debits_som(self):
+        await self.send("Furnituraga 30$")
+        await self.send("benzin 150000")
+        self.assertEqual(kassa.get_balance("USD"), 7000)
+        self.assertEqual(kassa.get_balance("UZS"), 1450000)
+        self.assertIn("Hisob: 💰 Naqd so'm", self.request.messages[-1])
+
+    async def test_income_and_dollar_expense_use_updated_recipient(self):
+        old_recipient = kassa.REPORT_CHAT_ID
+        with patch.object(kassa, "REPORT_CHAT_ID", 1003):
+            await self.send("Furnituraga 30$")
+            await self.send("💰 Pul oldim")
+            await self.send("🇺🇸 Dollar")
+            await self.send("50")
+        reports = [m for m in self.request.sent if m["chat_id"] == 1003]
+        self.assertEqual(len(reports), 2)
+        self.assertFalse(any(m["chat_id"] == old_recipient for m in self.request.sent))
+
+
 class NotificationTests(BotTestCase):
     def reports(self):
         return [m["text"] for m in self.request.sent if m["chat_id"] == kassa.REPORT_CHAT_ID]

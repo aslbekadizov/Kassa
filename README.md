@@ -37,6 +37,7 @@ Token, bazalar, zaxira nusxalari va loglar Git'ga qo'shilmaydi.
 - `💰 Pul oldim` — naqd so'm, dollar yoki `💳 Karta` hisobiga kirim kiritish.
 - `💵 $ maydalash` — dollarni so'mga almashtirish.
 - `benzin 150000` — asosiy menyudan naqd so'm xarajatini yozish.
+- `Furnituraga 300$` — asosiy menyudan naqd dollar hisobidan 300 dollar xarajat yozish.
 - `💳 Kartadan` yoki `/kartadan` — masalan, `Ali 200000` deb kartadan xarajat yozish.
 - `📊 Statistika` yoki `/statistika` — bugun, shu oy yoki barcha vaqt bo'yicha hisobot.
 - `/hisob` — naqd so'm, dollar va karta qoldiqlari.
@@ -44,6 +45,18 @@ Token, bazalar, zaxira nusxalari va loglar Git'ga qo'shilmaydi.
 - `/reset` — tasdiqlashdan keyin uchala hisob qoldig'i va tarixni tozalash. Avval `backups/` papkasiga baza zaxirasi olinadi.
 - `/cancel` — joriy amalni bekor qilish.
 - `/id` — Telegram ID raqami.
+
+## Dollar xarajatlari
+
+Asosiy menyuda xarajat nomi va summani yozib, oxiriga `$` belgisini qo'ying:
+
+- `Furnituraga 300$` — dollar qoldig'idan $300 ayiriladi.
+- `Usta 12.50$` yoki `Usta 12,50 $` — dollar qoldig'idan $12.50 ayiriladi.
+
+Summani musbat va ko'pi bilan ikki kasr xonasi bilan kiriting. Xarajat dollar sifatida
+tarix, statistika va qabul qiluvchiga yuboriladigan xabarda ham ko'rsatiladi.
+`$` belgisisiz xarajatlar so'mda hisoblanadi. `💳 Kartadan` bo'limi so'mda yuritiladi;
+dollar xarajatini kiritish uchun `/cancel` bilan asosiy menyuga qayting.
 
 ## Karta hisobi
 

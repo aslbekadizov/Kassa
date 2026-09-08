@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 from contextlib import closing
 from decimal import Decimal, InvalidOperation
@@ -344,14 +345,14 @@ def parse_usd(text):
         .replace(",", ".")
     )
 
-    value = Decimal(cleaned)
-
-    if value <= 0:
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]{1,2})?", cleaned):
         raise ValueError
 
-    cents = int(value * 100)
+    value = Decimal(cleaned)
+    if value <= 0 or value > Decimal("92233720368547758.07"):
+        raise ValueError
 
-    return cents
+    return int(value * 100)
 
 
 # =========================================================
@@ -702,13 +703,18 @@ async def exchange_uzs(
 # =========================================================
 
 def parse_expense_text(text):
-    parts = text.strip().rsplit(maxsplit=1)
+    text = text.strip()
+    currency = "USD" if text.endswith("$") else "UZS"
+    if currency == "USD":
+        text = text[:-1].rstrip()
+    parts = text.rsplit(maxsplit=1)
     if len(parts) != 2:
         raise ValueError
     name = " ".join(parts[0].split())
     if not name or len(name) > 200:
         raise ValueError
-    return name, parse_uzs(parts[1])
+    amount = parse_usd(parts[1]) if currency == "USD" else parse_uzs(parts[1])
+    return name, amount, currency
 
 
 async def card_expense_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -745,21 +751,31 @@ async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, acc
         return ConversationHandler.END
     retry_state = CARD_EXPENSE if account == "card" else ConversationHandler.END
     try:
-        name, amount = parse_expense_text(update.message.text)
+        name, amount, currency = parse_expense_text(update.message.text)
     except (ValueError, InvalidOperation):
         await update.message.reply_text(
             "❌ Kimga yoki nima uchun va summani yozing:\n\n"
-            "Ali 200000\nbenzin 150000\nusta 500000\n\n"
+            "Ali 200000\nbenzin 150000\nFurnituraga 300$\n\n"
+            "Dollarda kasrdan keyin ko'pi bilan 2 ta raqam yozing.\n"
             "Izoh 200 belgidan oshmasin.",
             reply_markup=CANCEL_KEYBOARD if account == "card" else MAIN_KEYBOARD
         )
         return retry_state
 
+    if account == "card" and currency == "USD":
+        await update.message.reply_text(
+            "💳 Karta hisobi so'mda yuritiladi.\n\n"
+            "Dollar xarajati uchun /cancel yuboring, keyin asosiy menyuda "
+            "Furnituraga 300$ deb yozing.",
+            reply_markup=CANCEL_KEYBOARD
+        )
+        return CARD_EXPENSE
+
     try:
         if account == "card":
             add_card_expense(amount, name, update.effective_user.id)
         else:
-            add_transaction("expense", "UZS", -amount, name, update.effective_user.id)
+            add_transaction("expense", currency, -amount, name, update.effective_user.id)
     except InsufficientCardFunds as exc:
         await update.message.reply_text(
             "❌ Kartadagi mablag' yetarli emas.\n"
@@ -777,19 +793,21 @@ async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, acc
         return retry_state
 
     context.chat_data.clear()
-    account_label = "💳 Karta" if account == "card" else "💰 Naqd so'm"
-    account_balance = get_balance("UZS", account)
+    account_label = "💳 Karta" if account == "card" else "💵 Naqd dollar" if currency == "USD" else "💰 Naqd so'm"
+    account_balance = get_balance(currency, account)
+    amount_text = format_usd(amount) if currency == "USD" else f"{format_uzs(amount)} so'm"
+    balance_text = format_usd(account_balance) if currency == "USD" else f"{format_uzs(account_balance)} so'm"
     await update.message.reply_text(
         "🔴 Xarajat yozildi\n\n"
         f"📝 {name}\n"
         f"Manba: {account_label}\n"
-        f"➖ {format_uzs(amount)} so'm\n\n"
-        f"{account_label} qoldiq: {format_uzs(account_balance)} so'm",
+        f"➖ {amount_text}\n\n"
+        f"{account_label} qoldiq: {balance_text}",
         reply_markup=MAIN_KEYBOARD
     )
 
     await send_transaction_report(
-        update, context, "expense", "UZS", amount, account=account, note=name
+        update, context, "expense", currency, amount, account=account, note=name
     )
     return ConversationHandler.END
 
