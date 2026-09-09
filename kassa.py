@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 import sqlite3
@@ -8,7 +9,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.error import TelegramError
+from telegram.error import RetryAfter, TelegramError
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -234,7 +235,7 @@ def get_history(limit=10):
 
 def get_statistics(period="all", now=None):
     now = (now or datetime.now(TZ)).astimezone(TZ)
-    conditions = "kind IN ('income', 'expense')"
+    conditions = "kind = 'expense'"
     params = []
     if period in ("today", "month"):
         begin = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -248,32 +249,25 @@ def get_statistics(period="all", now=None):
     elif period != "all":
         raise ValueError("Noto'g'ri davr")
 
-    totals = {
-        ("cash", "UZS"): {"income": 0, "expense": 0},
-        ("cash", "USD"): {"income": 0, "expense": 0},
-        ("card", "UZS"): {"income": 0, "expense": 0},
+    totals = {"UZS": 0, "USD": 0}
+    balances = {
+        ("cash", "UZS"): 0,
+        ("cash", "USD"): 0,
+        ("card", "UZS"): 0,
     }
-    top_expenses = {}
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
         conn.execute("BEGIN")
-        for account, currency, kind, amount in conn.execute(
-            "SELECT account, currency, kind, SUM(amount) FROM transactions "
-            f"WHERE {conditions} GROUP BY account, currency, kind", params
+        expenses = conn.execute(
+            "SELECT created_at, note, currency, -amount, account FROM transactions "
+            f"WHERE {conditions} ORDER BY created_at ASC, id ASC", params
+        ).fetchall()
+        for _, _, currency, amount, _ in expenses:
+            totals[currency] += amount
+        for account, currency, amount in conn.execute(
+            "SELECT account, currency, SUM(amount) FROM transactions GROUP BY account, currency"
         ):
-            totals[(account, currency)][kind] = amount if kind == "income" else -amount
-
-        conn.create_function(
-            "expense_name", 1,
-            lambda note: " ".join((note or "").split()).casefold() or "Nomsiz"
-        )
-        for currency in ("UZS", "USD"):
-            top_expenses[currency] = conn.execute(
-                "SELECT expense_name(note) AS name, SUM(-amount) AS total, COUNT(*) "
-                f"FROM transactions WHERE {conditions} AND kind = 'expense' AND currency = ? "
-                "GROUP BY expense_name(note) ORDER BY total DESC, name ASC LIMIT 5",
-                [*params, currency]
-            ).fetchall()
-    return totals, top_expenses
+            balances[(account, currency)] = amount
+    return expenses, totals, balances
 
 
 # =========================================================
@@ -846,7 +840,8 @@ async def statistics_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_not_cashier(update):
         return ConversationHandler.END
     context.chat_data.clear()
-    return await show_statistics(update, "all", "Barcha vaqt")
+    await update.message.reply_text("Davrni tanlang:", reply_markup=STATISTICS_KEYBOARD)
+    return STATISTICS_PERIOD
 
 
 async def statistics_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -862,43 +857,65 @@ async def statistics_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await show_statistics(update, *selection)
 
 
+def split_statistics_text(text, limit=4000):
+    while text:
+        size = 0
+        end = 0
+        last_newline = 0
+        for char in text:
+            width = 2 if ord(char) > 0xFFFF else 1
+            if size + width > limit:
+                break
+            size += width
+            end += 1
+            if char == "\n":
+                last_newline = end
+        else:
+            yield text
+            return
+        cut = last_newline or end
+        chunk = text[:cut].rstrip("\n")
+        if chunk:
+            yield chunk
+        text = text[cut:]
+
+
 async def show_statistics(update: Update, period, label):
-    totals, top_expenses = get_statistics(period)
-    cash = totals[("cash", "UZS")]
-    card = totals[("card", "UZS")]
-    usd = totals[("cash", "USD")]
-    income_uzs = cash["income"] + card["income"]
-    expense_uzs = cash["expense"] + card["expense"]
-    lines = [
-        f"📊 STATISTIKA — {label}",
-        "Davr: Toshkent vaqti bo'yicha\n",
-        "🟢 PUL OLDIM",
-        f"Naqd so'm: {format_uzs(cash['income'])} so'm",
-        f"Karta: {format_uzs(card['income'])} so'm",
-        f"Jami so'm: {format_uzs(income_uzs)} so'm",
-        f"Dollar: {format_usd(usd['income'])}\n",
-        "🔴 XARAJATLAR",
-        f"Naqd so'm: {format_uzs(cash['expense'])} so'm",
-        f"Karta: {format_uzs(card['expense'])} so'm",
-        f"Jami so'm: {format_uzs(expense_uzs)} so'm",
-        f"Dollar: {format_usd(usd['expense'])}\n",
-        "🔄 AYLANMA (kirim + xarajat)",
-        f"So'm: {format_uzs(income_uzs + expense_uzs)} so'm",
-        f"Dollar: {format_usd(usd['income'] + usd['expense'])}\n",
-        "🏆 ENG KO'P XARAJAT — TOP 5",
-    ]
-    if not any(top_expenses.values()):
+    expenses, totals, balances = get_statistics(period)
+    lines = [f"📊 STATISTIKA — {label}", ""]
+    if not expenses:
         lines.append("Bu davrda xarajat yo'q.")
-    for currency, rows in top_expenses.items():
-        if not rows:
-            continue
-        lines.append("So'm (naqd + karta):" if currency == "UZS" else "Dollar:")
-        for index, (name, amount, count) in enumerate(rows, 1):
-            name = name if len(name) <= 60 else name[:57] + "..."
-            amount_text = f"{format_uzs(amount)} so'm" if currency == "UZS" else format_usd(amount)
-            lines.append(f"{index}. {name}: {amount_text} ({count} ta)")
-    lines.append("\nDollar maydalash kirim va xarajatga qo'shilmaydi.")
-    await update.message.reply_text("\n".join(lines), reply_markup=STATISTICS_KEYBOARD)
+    for index, (created_at, note, currency, amount, account) in enumerate(expenses, 1):
+        amount_text = format_usd(amount) if currency == "USD" else f"{format_uzs(amount)} so'm"
+        source = "karta" if account == "card" else "naqd"
+        lines.append(f"{index}. {note or 'Nomsiz'} — {amount_text} ({source})\n{created_at[:16]}")
+
+    summary = (
+        "JAMI XARAJAT\n"
+        f"So'm: {format_uzs(totals['UZS'])} so'm\n"
+        f"Dollar: {format_usd(totals['USD'])}\n\n"
+        "HOZIRGI QOLDIQ\n"
+        f"Naqd so'm: {format_uzs(balances[('cash', 'UZS')])} so'm\n"
+        f"Karta: {format_uzs(balances[('card', 'UZS')])} so'm\n"
+        f"Dollar: {format_usd(balances[('cash', 'USD')])}"
+    )
+    chunks = list(split_statistics_text("\n".join(lines)))
+    combined = chunks[-1] + "\n\n" + summary
+    if len(combined.encode("utf-16-le")) // 2 <= 4000:
+        chunks[-1] = combined
+    else:
+        chunks.append(summary)
+
+    for chunk in chunks:
+        while True:
+            try:
+                await update.message.reply_text(chunk, reply_markup=STATISTICS_KEYBOARD)
+                break
+            except RetryAfter as exc:
+                delay = exc.retry_after
+                if isinstance(delay, timedelta):
+                    delay = delay.total_seconds()
+                await asyncio.sleep(delay + 0.1)
     return STATISTICS_PERIOD
 
 

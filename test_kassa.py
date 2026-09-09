@@ -6,7 +6,7 @@ from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from telegram import Update
 from telegram.ext import Application, ApplicationBuilder
@@ -22,6 +22,7 @@ class FakeTelegramRequest(BaseRequest):
         self.messages = []
         self.sent = []
         self.fail_chat_ids = set()
+        self.rate_limit_after = None
 
     @property
     def read_timeout(self):
@@ -43,6 +44,13 @@ class FakeTelegramRequest(BaseRequest):
         elif action == "sendMessage":
             params = request_data.parameters
             assert len(params["text"].encode("utf-16-le")) // 2 <= 4096
+            if self.rate_limit_after == len(self.sent):
+                self.rate_limit_after = None
+                return 429, json.dumps({
+                    "ok": False, "error_code": 429,
+                    "description": "Too Many Requests: retry after 1",
+                    "parameters": {"retry_after": 1},
+                }).encode()
             if params["chat_id"] in self.fail_chat_ids:
                 return 403, json.dumps({
                     "ok": False, "error_code": 403,
@@ -344,44 +352,89 @@ class CardAndStatisticsTests(BotTestCase):
             self.assertIn("faqat kassir", self.request.messages[-1])
         self.assertEqual(self.rows(self.db_path), self.original_rows)
 
-    async def test_statistics_exclude_exchange_and_combine_same_expense_names(self):
+    async def test_statistics_list_each_expense_and_only_totals_and_current_balances(self):
         kassa.add_transaction("income", "UZS", 1000000, account="card")
         kassa.add_card_expense(400000, " BENZIN ")
         kassa.add_transaction("expense", "UZS", -150000, "benzin")
         kassa.add_transaction("expense", "USD", -5000, "Usta")
-        totals, top = kassa.get_statistics()
-        self.assertEqual(totals[("cash", "UZS")], {"income": 500000, "expense": 250000})
-        self.assertEqual(totals[("card", "UZS")], {"income": 1000000, "expense": 400000})
-        self.assertEqual(totals[("cash", "USD")], {"income": 20000, "expense": 5000})
-        self.assertEqual(top["UZS"][0], ("benzin", 550000, 2))
-        self.assertEqual(top["USD"], [("usta", 5000, 1)])
+        expenses, totals, balances = kassa.get_statistics()
+        self.assertEqual([row[1:] for row in expenses], [
+            ("Sinov xarajat", "UZS", 100000, "cash"),
+            (" BENZIN ", "UZS", 400000, "card"),
+            ("benzin", "UZS", 150000, "cash"),
+            ("Usta", "USD", 5000, "cash"),
+        ])
+        self.assertEqual(totals, {"UZS": 650000, "USD": 5000})
+        self.assertEqual(balances, {
+            ("cash", "UZS"): 1450000, ("card", "UZS"): 600000, ("cash", "USD"): 5000,
+        })
+        before = self.rows(self.db_path)
         await self.send("/statistika")
-        text = self.request.messages[-1]
-        self.assertIn("Jami so'm: 1 500 000", text)
-        self.assertIn("Jami so'm: 650 000", text)
-        self.assertIn("So'm: 2 150 000", text)
-        self.assertIn("Dollar: $250", text)
-        self.assertIn("1. benzin: 550 000 so'm (2 ta)", text)
+        await self.send("📋 Barcha vaqt")
+        expected_entries = [
+            "1. Sinov xarajat — 100 000 so'm (naqd)",
+            "2.  BENZIN  — 400 000 so'm (karta)",
+            "3. benzin — 150 000 so'm (naqd)",
+            "4. Usta — $50 (naqd)",
+        ]
+        expected_list = "\n".join(
+            entry + "\n" + row[0][:16] for entry, row in zip(expected_entries, expenses)
+        )
+        self.assertEqual(self.request.messages[-1],
+            "📊 STATISTIKA — Barcha vaqt\n\n" + expected_list + "\n\n"
+            "JAMI XARAJAT\nSo'm: 650 000 so'm\nDollar: $50\n\n"
+            "HOZIRGI QOLDIQ\nNaqd so'm: 1 450 000 so'm\nKarta: 600 000 so'm\nDollar: $50"
+        )
+        self.assertEqual(self.rows(self.db_path), before)
 
     async def test_statistics_menu_periods_and_empty_report(self):
         kassa.reset_database()
         await self.send(kassa.STATISTICS_BUTTON)
-        self.assertIn("Bu davrda xarajat yo'q", self.request.messages[-1])
+        self.assertEqual(self.request.messages, ["Davrni tanlang:"])
+        self.assertEqual(self.request.sent[-1]["reply_markup"], kassa.STATISTICS_KEYBOARD.to_dict())
         for button, (_, label) in kassa.STATISTICS_PERIODS.items():
             await self.send(button)
-            self.assertIn(f"STATISTIKA — {label}", self.request.messages[-1])
+            self.assertEqual(self.request.messages[-1],
+                f"📊 STATISTIKA — {label}\n\nBu davrda xarajat yo'q.\n\n"
+                "JAMI XARAJAT\nSo'm: 0 so'm\nDollar: $0\n\n"
+                "HOZIRGI QOLDIQ\nNaqd so'm: 0 so'm\nKarta: 0 so'm\nDollar: $0"
+            )
         await self.send(kassa.BACK_BUTTON)
         self.assertIn("Kassa bot", self.request.messages[-1])
 
-    async def test_statistics_top_five_are_sorted_and_fit_telegram_limit(self):
+    async def test_statistics_send_all_expenses_and_full_long_notes_in_multiple_messages(self):
         kassa.reset_database()
-        for index in range(8):
-            name = ("🚗" * 400) + str(index)
-            kassa.add_transaction("expense", "UZS", -(index + 1) * 100, name)
-        _, top = kassa.get_statistics()
-        self.assertEqual([row[1] for row in top["UZS"]], [800, 700, 600, 500, 400])
+        names = [f"Xarajat {index}: " + "🚗" * 150 for index in range(30)]
+        names.insert(8, "Juda uzun izoh: " + "🔧" * 2500)
+        names.extend(["Takror xarajat", "Takror xarajat"])
+        for index, name in enumerate(names, 1):
+            kassa.add_transaction("expense", "UZS", -index * 100, name)
+        before = self.rows(self.db_path)
         await self.send("/stats")
-        self.assertIn("...", self.request.messages[-1])
+        start = len(self.request.messages)
+        # Telegram temporarily throttles the second part; already sent parts must not repeat.
+        self.request.rate_limit_after = len(self.request.sent) + 1
+        with patch.object(kassa.asyncio, "sleep", new_callable=AsyncMock) as sleep:
+            await self.send("📋 Barcha vaqt")
+            sleep.assert_awaited_once()
+            self.assertGreaterEqual(sleep.await_args.args[0], 1)
+        chunks = self.request.messages[start:]
+        self.assertGreater(len(chunks), 3)
+        combined = "".join(chunks)
+        previous_position = -1
+        for index, name in enumerate(names, 1):
+            entry = f"{index}. {name} — {kassa.format_uzs(index * 100)} so'm (naqd)"
+            self.assertEqual(combined.count(entry), 1)
+            position = combined.index(entry)
+            self.assertGreater(position, previous_position)
+            previous_position = position
+        self.assertEqual(combined.count("JAMI XARAJAT"), 1)
+        self.assertEqual(combined.count("HOZIRGI QOLDIQ"), 1)
+        self.assertIn("JAMI XARAJAT\nSo'm: 56 100 so'm\nDollar: $0", chunks[-1])
+        self.assertIn("Naqd so'm: -56 100 so'm", chunks[-1])
+        for chunk in chunks:
+            self.assertLessEqual(len(chunk.encode("utf-16-le")) // 2, 4000)
+        self.assertEqual(self.rows(self.db_path), before)
 
     async def test_statistics_date_boundaries_use_tashkent_time(self):
         kassa.reset_database()
@@ -401,11 +454,43 @@ class CardAndStatisticsTests(BotTestCase):
                 "VALUES (?, 'expense', 'UZS', -?, 'Sinov')", dates
             )
         now = datetime(2026, 9, 6, 20, tzinfo=timezone.utc)
-        for period, expected in (("today", 11000), ("month", 111110), ("all", 1111111)):
-            totals, top = kassa.get_statistics(period, now=now)
-            self.assertEqual(totals[("card", "UZS")]["income"], expected)
-            self.assertEqual(totals[("cash", "UZS")]["expense"], expected)
-            self.assertEqual(top["UZS"][0][1], expected)
+        cases = [
+            ("today", 11000, dates[3:5]),
+            ("month", 111110, dates[1:6]),
+            ("all", 1111111, dates),
+        ]
+        for period, expected, included_dates in cases:
+            expenses, totals, balances = kassa.get_statistics(period, now=now)
+            self.assertEqual([(row[0], row[3]) for row in expenses], included_dates)
+            self.assertEqual(totals, {"UZS": expected, "USD": 0})
+            self.assertEqual(balances, {
+                ("cash", "UZS"): -1111111, ("card", "UZS"): 1111111, ("cash", "USD"): 0,
+            })
+
+    async def test_empty_today_keeps_prior_balances_and_month_lists_prior_expenses(self):
+        kassa.reset_database()
+        with patch.object(kassa, "now_text", return_value="2026-09-08 12:00:00"):
+            kassa.add_transaction("income", "UZS", 500000)
+            kassa.add_transaction("income", "UZS", 200000, account="card")
+            kassa.add_transaction("income", "USD", 30000)
+            kassa.add_transaction("expense", "UZS", -50000, "Kecha benzin")
+            kassa.add_transaction("expense", "USD", -10000, "Kecha furnitura")
+        # At 20:00 UTC on September 8 it is already September 9 in Tashkent.
+        with patch.object(kassa, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = datetime(2026, 9, 8, 20, tzinfo=timezone.utc)
+            await self.send("/stats")
+            await self.send("📅 Bugun")
+            today = self.request.messages[-1]
+            self.assertNotIn("Kecha", today)
+            self.assertIn("Bu davrda xarajat yo'q.", today)
+            self.assertIn("JAMI XARAJAT\nSo'm: 0 so'm\nDollar: $0", today)
+            self.assertIn("Naqd so'm: 450 000 so'm\nKarta: 200 000 so'm\nDollar: $200", today)
+            await self.send("🗓 Shu oy")
+            month = self.request.messages[-1]
+            self.assertIn("1. Kecha benzin — 50 000 so'm (naqd)", month)
+            self.assertIn("2. Kecha furnitura — $100 (naqd)", month)
+            self.assertIn("JAMI XARAJAT\nSo'm: 50 000 so'm\nDollar: $100", month)
+            self.assertIn("Naqd so'm: 450 000 so'm\nKarta: 200 000 so'm\nDollar: $200", month)
 
 
 class DollarExpenseTests(BotTestCase):
@@ -426,10 +511,10 @@ class DollarExpenseTests(BotTestCase):
         self.assertIn("Hisob: 💵 Naqd dollar", report["text"])
         self.assertIn("➖ $300", report["text"])
         self.assertNotIn("qoldiq", report["text"].lower())
-        totals, top = kassa.get_statistics()
-        self.assertEqual(totals[("cash", "USD")]["expense"], 30000)
-        self.assertEqual(totals[("cash", "UZS")]["expense"], 100000)
-        self.assertEqual(top["USD"], [("furnituraga", 30000, 1)])
+        expenses, totals, balances = kassa.get_statistics()
+        self.assertEqual(totals, {"UZS": 100000, "USD": 30000})
+        self.assertEqual(expenses[-1][1:], ("Furnituraga", "USD", 30000, "cash"))
+        self.assertEqual(balances[("cash", "USD")], 30000)
         await self.send("/tarix")
         self.assertIn("-$300", self.request.messages[-1])
 
@@ -521,7 +606,7 @@ class NotificationTests(BotTestCase):
         ])
 
     async def test_exchange_statistics_history_and_reset_do_not_send_reports(self):
-        for text in ("/start", "/hisob", "/tarix", "/statistika", kassa.BACK_BUTTON, "/id"):
+        for text in ("/start", "/hisob", "/tarix", "/statistika", "📋 Barcha vaqt", kassa.BACK_BUTTON, "/id"):
             await self.send(text)
         await self.send("💵 $ maydalash")
         await self.send("10")
@@ -595,9 +680,12 @@ class MigrationTests(unittest.TestCase):
                 kassa.add_exchange(10000, 1200000)
                 self.assertEqual(kassa.get_balance("UZS", "card"), 250000)
                 self.assertEqual(kassa.get_balance("UZS"), 1600000)
-                totals, _ = kassa.get_statistics()
-                self.assertEqual(totals[("cash", "UZS")]["income"], 500000)
-                self.assertEqual(totals[("card", "UZS")]["expense"], 50000)
+                expenses, totals, balances = kassa.get_statistics()
+                self.assertEqual(len(expenses), 2)
+                self.assertEqual(totals, {"UZS": 150000, "USD": 0})
+                self.assertEqual(balances, {
+                    ("cash", "UZS"): 1600000, ("card", "UZS"): 250000, ("cash", "USD"): 10000,
+                })
 
 
 if __name__ == "__main__":

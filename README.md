@@ -79,17 +79,18 @@ Xabar yetib bormasa, operatsiya bazada saqlanadi va kassirga bu haqda bildirilad
 
 ## Statistika
 
-Hisobotda quyidagilar bor:
+Avval `Bugun`, `Shu oy` yoki `Barcha vaqt` davrini tanlang. Hisobotda faqat:
 
-- Qancha pul olingani va qancha sarflangani: naqd so'm, karta va dollar alohida.
-- So'm bo'yicha naqd va karta summalarining jami.
-- Aylanma: kirim va xarajat yig'indisi; so'm va dollar alohida ko'rsatiladi.
-- Eng ko'p xarajat qilingan 5 ta nom, jami summa va operatsiyalar soni.
+- Tanlangan davrdagi barcha xarajatlar: izoh, summa, naqd yoki karta hisobi va vaqt.
+- Shu davrda jami sarflangan so'm (naqd va karta birga) va dollar alohida.
+- Hozirgi naqd so'm, karta va dollar qoldiqlari.
 
-Bir xil nomdagi naqd va karta xarajatlari so'm statistikasida birlashtiriladi.
-Katta-kichik harf va ortiqcha bo'shliqlar farq qilmaydi: `Benzin` va `benzin` bitta nom.
-Dollar maydalash ichki almashtirish bo'lgani uchun kirim, xarajat va aylanmaga qayta qo'shilmaydi.
-Davrlar Toshkent vaqti bo'yicha hisoblanadi. `Barcha vaqt` mavjud bazadagi barcha yozuvlarni qamrab oladi.
+Har bir xarajat alohida satrda chiqadi, bir xil nomdagilari ham alohida saqlanadi.
+Ro'yxat vaqt bo'yicha tartiblanadi; uzun bo'lsa, to'liq holda bir nechta xabarga bo'linadi.
+`Bugun` va `Shu oy` Toshkent vaqti bo'yicha joriy kun va kalendar oyni bildiradi.
+`Barcha vaqt` mavjud bazadagi barcha xarajatlarni qamrab oladi.
+Qoldiqlar tanlangan davrdan qat'i nazar hozirgi hisobni ko'rsatadi.
+Dollar maydalash xarajatlar ro'yxati va jami sarfga qo'shilmaydi, qoldiqlarda hisobga olinadi.
 
 ## Serverdagi mavjud botni yangilash
 
