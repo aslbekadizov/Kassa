@@ -46,6 +46,19 @@ Token, bazalar, zaxira nusxalari va loglar Git'ga qo'shilmaydi.
 - `/cancel` — joriy amalni bekor qilish.
 - `/id` — Telegram ID raqami.
 
+## Pul oldim
+
+`💰 Pul oldim` tugmasidan keyin so'm yoki dollarni tanlab, kimdan olganingizni va
+miqdorni bitta xabarda yozing:
+
+- `🇺🇿 So'm` → `Alidan 500000` yoki `Ali akadan 500 000`: naqd so'mga 500 000 qo'shiladi.
+- `🇺🇸 Dollar` → `Alidan 300`: dollar hisobiga $300 qo'shiladi.
+- `🇺🇸 Dollar` → `Alidan 12.50$` yoki `Alidan 12,50 $`: $12.50 qo'shiladi.
+
+Kimdan olingani tasdiqlash xabarida, tarixda va hisobot oluvchiga yuboriladigan
+kirim xabarida ko'rinadi. Valyuta tanlangan tugma bilan belgilanadi.
+Faqat summani yozish ham avvalgidek ishlaydi. Karta kirimida summani yozasiz.
+
 ## Dollar xarajatlari
 
 Asosiy menyuda xarajat nomi va summani yozib, oxiriga `$` belgisini qo'ying:
@@ -69,7 +82,8 @@ Karta hisobi so'mda yuritiladi. O'tkazmani bank ilovangizda bajarasiz, keyin bot
 Kartadagi mablag' yetarli bo'lmasa, xarajat yozilmaydi. Har bir karta xarajati uchun
 `💳 Kartadan` tugmasini bosing. Saqlangandan keyin bot asosiy menyuga qaytadi.
 Hisobotni oladigan odamga har bir kirim va xarajat alohida yuboriladi.
-Xabarda hisob turi (naqd so'm, dollar yoki karta), summa, vaqt va xarajat bo'lsa izohi ko'rsatiladi.
+Xabarda hisob turi (naqd so'm, dollar yoki karta), summa, vaqt, kirimda kimdan olingani
+(kiritilgan bo'lsa) va xarajatda izohi ko'rsatiladi.
 Qoldiqlar, statistika, tarix, dollar maydalash va reset haqidagi xabarlar unga yuborilmaydi.
 Kassa amallari va to'liq hisobotlar faqat `CASHIER_ID` dagi kassir uchun ochiq.
 

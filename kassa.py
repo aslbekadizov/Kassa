@@ -349,6 +349,22 @@ def parse_usd(text):
     return int(value * 100)
 
 
+def parse_income_text(text, currency):
+    text = " ".join(text.split())
+    parse_amount = parse_usd if currency == "USD" else parse_uzs
+    amount_pattern = r"\$?\s*[+-]?[0-9][0-9.,_' ]*(?:\s*(?:\$|usd|uzs|so'm|soʻm|som))?"
+    if re.fullmatch(amount_pattern, text, flags=re.IGNORECASE):
+        return "", parse_amount(text)
+
+    match = re.fullmatch(rf"(.+?)\s+({amount_pattern})", text, flags=re.IGNORECASE)
+    if match is None:
+        raise ValueError
+    name, amount_text = match.groups()
+    if len(name) > 200 or not any(char.isalpha() for char in name):
+        raise ValueError
+    return name, parse_amount(amount_text)
+
+
 # =========================================================
 # HUQUQ TEKSHIRISH
 # =========================================================
@@ -392,7 +408,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Kerakli amalni tanlang:\n\n"
         "/hisob — qoldiq\n"
         "/tarix — oxirgi operatsiyalar\n"
-        "/statistika — kirim va xarajat statistikasi\n"
+        "/statistika — xarajatlar va qoldiqlar\n"
         "/reset — qoldiq va tarixni nolga tushirish",
         reply_markup=MAIN_KEYBOARD
     )
@@ -474,9 +490,9 @@ async def choose_currency(
         context.chat_data["income_account"] = "cash"
 
         await update.message.reply_text(
-            "💰 Necha so'm oldingiz?\n\n"
+            "💰 Kimdan va necha so'm oldingiz?\n\n"
             "Masalan:\n"
-            "5000000",
+            "Alidan 500000",
             reply_markup=CANCEL_KEYBOARD
         )
 
@@ -487,9 +503,9 @@ async def choose_currency(
         context.chat_data["income_account"] = "cash"
 
         await update.message.reply_text(
-            "💵 Necha dollar oldingiz?\n\n"
+            "💵 Kimdan va necha dollar oldingiz?\n\n"
             "Masalan:\n"
-            "500",
+            "Alidan 300",
             reply_markup=CANCEL_KEYBOARD
         )
 
@@ -515,16 +531,20 @@ async def income_amount(
     account = context.chat_data.get("income_account", "cash")
 
     try:
+        if account == "card":
+            name, amount = "", parse_uzs(update.message.text)
+        else:
+            name, amount = parse_income_text(update.message.text, currency)
+        source_note = f"Kimdan: {name}" if name else ""
+        source_line = f"👤 {source_note}\n" if source_note else ""
 
         if currency == "UZS":
-
-            amount = parse_uzs(update.message.text)
 
             add_transaction(
                 "income",
                 "UZS",
                 amount,
-                "Kartaga pul olindi" if account == "card" else "Pul olindi",
+                source_note or ("Kartaga pul olindi" if account == "card" else "Pul olindi"),
                 update.effective_user.id,
                 account=account
             )
@@ -534,6 +554,7 @@ async def income_amount(
 
             await update.message.reply_text(
                 "✅ Pul qabul qilindi\n\n"
+                f"{source_line}"
                 f"➕ {format_uzs(amount)} so'm\n"
                 f"{label}: "
                 f"{format_uzs(balance)} so'm",
@@ -542,13 +563,11 @@ async def income_amount(
 
         else:
 
-            amount = parse_usd(update.message.text)
-
             add_transaction(
                 "income",
                 "USD",
                 amount,
-                "Dollar olindi",
+                source_note or "Dollar olindi",
                 update.effective_user.id
             )
 
@@ -556,6 +575,7 @@ async def income_amount(
 
             await update.message.reply_text(
                 "✅ Dollar qabul qilindi\n\n"
+                f"{source_line}"
                 f"➕ {format_usd(amount)}\n"
                 f"💵 Dollar qoldiq: "
                 f"{format_usd(balance)}",
@@ -564,15 +584,19 @@ async def income_amount(
 
         context.chat_data.clear()
         await send_transaction_report(
-            update, context, "income", currency, amount, account=account
+            update, context, "income", currency, amount, account=account, note=source_note
         )
         return ConversationHandler.END
 
     except (ValueError, InvalidOperation):
-
+        example = "Alidan 300" if currency == "USD" else "Alidan 500000"
+        guidance = "Kimdan olganingizni va summani to'g'ri yozing."
+        if account == "card":
+            example = "500000"
+            guidance = "Summani to'g'ri kiriting."
         await update.message.reply_text(
-            "❌ Summani to'g'ri kiriting.\n\n"
-            "Masalan: 500000"
+            f"❌ {guidance}\n\nMasalan: {example}",
+            reply_markup=CANCEL_KEYBOARD
         )
 
         return INCOME_AMOUNT

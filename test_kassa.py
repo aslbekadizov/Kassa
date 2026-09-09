@@ -221,6 +221,123 @@ class ResetTests(BotTestCase):
         self.assertIn("Ma'lumotlar saqlandi", self.request.messages[-1])
 
 
+class NamedIncomeTests(BotTestCase):
+    async def test_source_is_saved_shown_and_reported_for_both_cash_currencies(self):
+        kassa.add_transaction("income", "UZS", 200000, account="card")
+        cases = [
+            ("🇺🇿 So'm", "Ali akadan 500000", "Ali akadan", "UZS", 500000,
+             "💰 Naqd so'm", "500 000 so'm"),
+            ("🇺🇸 Dollar", "Vali akadan 125.50", "Vali akadan", "USD", 12550,
+             "💵 Naqd dollar", "$125.50"),
+        ]
+        for button, text, name, currency, amount, account_label, amount_text in cases:
+            before = {code: kassa.get_balance(code) for code in ("UZS", "USD")}
+            rows_before = self.rows(self.db_path)
+            await self.send("💰 Pul oldim")
+            await self.send(button)
+            self.assertIn("Kimdan", self.request.messages[-1])
+            self.assertEqual(self.rows(self.db_path), rows_before)
+            with patch.object(kassa, "now_text", return_value="2026-09-09 12:00:00"):
+                await self.send(text)
+            self.assertEqual(len(self.rows(self.db_path)), len(rows_before) + 1)
+            for code in ("UZS", "USD"):
+                self.assertEqual(kassa.get_balance(code), before[code] + (amount if code == currency else 0))
+            self.assertEqual(kassa.get_balance("UZS", "card"), 200000)
+            self.assertEqual(kassa.get_history()[0],
+                ("2026-09-09 12:00:00", "income", currency, amount, f"Kimdan: {name}", "cash")
+            )
+            confirmation, report = self.request.sent[-2:]
+            self.assertEqual(confirmation["chat_id"], kassa.CASHIER_ID)
+            self.assertIn(f"Kimdan: {name}", confirmation["text"])
+            self.assertIn(f"➕ {amount_text}", confirmation["text"])
+            self.assertEqual(confirmation["reply_markup"], kassa.MAIN_KEYBOARD.to_dict())
+            self.assertEqual(report["chat_id"], kassa.REPORT_CHAT_ID)
+            self.assertEqual(report["text"],
+                f"🟢 YANGI KIRIM\n\nHisob: {account_label}\n📝 Kimdan: {name}\n"
+                f"➕ {amount_text}\n🕐 2026-09-09 12:00:00"
+            )
+            await self.send("/tarix")
+            self.assertIn(f"Kimdan: {name}", self.request.messages[-1])
+        await self.send("/stats")
+        await self.send("📋 Barcha vaqt")
+        self.assertNotIn("Kimdan:", self.request.messages[-1])
+        self.assertIn("JAMI XARAJAT\nSo'm: 100 000 so'm\nDollar: $0", self.request.messages[-1])
+
+    async def test_named_income_accepts_full_names_grouped_amounts_and_currency_suffixes(self):
+        cases = [
+            ("🇺🇿 So'm", "  Ali   akadan\n500 000  so'm  ", "Ali akadan", "UZS", 500000),
+            ("🇺🇿 So'm", "12 sexdan 250_000 UZS", "12 sexdan", "UZS", 250000),
+            ("🇺🇿 So'm", "Som 5000", "Som", "UZS", 5000),
+            ("🇺🇸 Dollar", "G'ani akadan 12,50 $", "G'ani akadan", "USD", 1250),
+            ("🇺🇸 Dollar", "Alidan 300$", "Alidan", "USD", 30000),
+            ("🇺🇸 Dollar", "Alidan 0.01 USD", "Alidan", "USD", 1),
+            ("🇺🇸 Dollar", "Alidan $ 50", "Alidan", "USD", 5000),
+        ]
+        for button, text, name, currency, amount in cases:
+            await self.send("💰 Pul oldim")
+            await self.send(button)
+            await self.send(text)
+            self.assertEqual(kassa.get_history()[0][1:],
+                ("income", currency, amount, f"Kimdan: {name}", "cash")
+            )
+        self.assertEqual(len(self.rows(self.db_path)), len(self.original_rows) + len(cases))
+
+    async def test_invalid_named_income_preserves_money_and_allows_retry(self):
+        cases = [
+            ("🇺🇿 So'm", "UZS", "Alidan 500000", 500000, [
+                "Alidan", "Alidan 0", "Alidan -500", "Alidan 300$", "Alidan 300 USD",
+                "Alidan 9223372036854775808", "Alidan besh yuz", "A" * 201 + " 5000",
+            ]),
+            ("🇺🇸 Dollar", "USD", "Alidan 300", 30000, [
+                "Alidan", "Alidan 0", "Alidan -300", "Alidan 0.001$", "Alidan NaN",
+                "Alidan Infinity", "Alidan 1e3", "Alidan 92233720368547758.08",
+                "Alidan 500000 so'm", "Alidan 500000 UZS", "A" * 201 + " 300",
+            ]),
+        ]
+        for button, currency, valid_text, amount, invalid_texts in cases:
+            before = self.rows(self.db_path)
+            report_count = sum(m["chat_id"] == kassa.REPORT_CHAT_ID for m in self.request.sent)
+            await self.send("💰 Pul oldim")
+            await self.send(button)
+            for text in invalid_texts:
+                await self.send(text)
+                self.assertEqual(self.rows(self.db_path), before, text)
+                self.assertIn("❌", self.request.messages[-1], text)
+                self.assertIn(valid_text, self.request.messages[-1], text)
+            self.assertEqual(sum(m["chat_id"] == kassa.REPORT_CHAT_ID for m in self.request.sent), report_count)
+            await self.send(valid_text)
+            self.assertEqual(len(self.rows(self.db_path)), len(before) + 1)
+            self.assertEqual(kassa.get_history()[0][1:],
+                ("income", currency, amount, "Kimdan: Alidan", "cash")
+            )
+
+    async def test_source_is_not_reused_after_cancel_or_next_income(self):
+        await self.send("💰 Pul oldim")
+        await self.send("🇺🇿 So'm")
+        await self.send("Alidan")
+        await self.send("/cancel")
+        self.assertEqual(self.rows(self.db_path), self.original_rows)
+        await self.send("💰 Pul oldim")
+        await self.send("🇺🇸 Dollar")
+        await self.send("Validan 20")
+        await self.send("💰 Pul oldim")
+        await self.send("🇺🇿 So'm")
+        await self.send("500000")
+        self.assertEqual(kassa.get_history()[0][1:], ("income", "UZS", 500000, "Pul olindi", "cash"))
+        self.assertNotIn("Kimdan:", self.request.messages[-1])
+        self.assertEqual(len(self.rows(self.db_path)), len(self.original_rows) + 2)
+        await self.send("benzin 150000")
+        self.assertEqual(kassa.get_history()[0][1:4], ("expense", "UZS", -150000))
+
+    async def test_other_person_cannot_submit_named_income_in_cashier_chat(self):
+        await self.send("💰 Pul oldim", chat_id=-500)
+        await self.send("🇺🇿 So'm", chat_id=-500)
+        await self.send("Alidan 500000", actor_id=999, chat_id=-500)
+        self.assertEqual(self.rows(self.db_path), self.original_rows)
+        self.assertIn("faqat kassir", self.request.messages[-1])
+        self.assertFalse(any(m["chat_id"] == kassa.REPORT_CHAT_ID for m in self.request.sent))
+
+
 class CardAndStatisticsTests(BotTestCase):
     async def card_income(self, amount):
         await self.send("💰 Pul oldim")
@@ -632,8 +749,9 @@ class NotificationTests(BotTestCase):
         before = kassa.get_balance("UZS")
         await self.send("💰 Pul oldim")
         await self.send("🇺🇿 So'm")
-        await self.send("500000")
+        await self.send("Alidan 500000")
         self.assertEqual(kassa.get_balance("UZS"), before + 500000)
+        self.assertEqual(kassa.get_history()[0][4], "Kimdan: Alidan")
         self.assertIn("Kirim saqlandi", self.request.messages[-1])
         await self.send("benzin 150000")
         self.assertEqual(kassa.get_balance("UZS"), before + 350000)
