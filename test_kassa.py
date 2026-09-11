@@ -789,7 +789,8 @@ class MigrationTests(unittest.TestCase):
                 kassa.init_db()
                 with closing(sqlite3.connect(db_path)) as conn:
                     migrated = conn.execute("SELECT * FROM transactions ORDER BY id").fetchall()
-                self.assertEqual(migrated, [row + ("cash",) for row in original])
+                self.assertEqual(migrated, [row + ("cash", None) for row in original])
+                self.assertEqual(kassa.get_clients(), [])
                 self.assertEqual(kassa.get_balance("UZS"), 400000)
                 self.assertEqual(kassa.get_balance("USD"), 20000)
                 self.assertEqual(kassa.get_balance("UZS", "card"), 0)

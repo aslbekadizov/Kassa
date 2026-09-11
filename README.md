@@ -35,6 +35,8 @@ Token, bazalar, zaxira nusxalari va loglar Git'ga qo'shilmaydi.
 
 - `/start` — asosiy menyu.
 - `💰 Pul oldim` — naqd so'm, dollar yoki `💳 Karta` hisobiga kirim kiritish.
+- `👥 Mijozlar` yoki `/mijozlar` — mijoz qo'shish va uning alohida hisobini ochish.
+- `🧾 Boshqa xarajatlar` yoki `/boshqa` — mijozga tegishli bo'lmagan xarajatlar.
 - `💵 $ maydalash` — dollarni so'mga almashtirish.
 - `benzin 150000` — asosiy menyudan naqd so'm xarajatini yozish.
 - `Furnituraga 300$` — asosiy menyudan naqd dollar hisobidan 300 dollar xarajat yozish.
@@ -58,6 +60,43 @@ miqdorni bitta xabarda yozing:
 Kimdan olingani tasdiqlash xabarida, tarixda va hisobot oluvchiga yuboriladigan
 kirim xabarida ko'rinadi. Valyuta tanlangan tugma bilan belgilanadi.
 Faqat summani yozish ham avvalgidek ishlaydi. Karta kirimida summani yozasiz.
+
+## Mijozlar hisobi
+
+Mijozlar ro'yxati bo'sh boshlanadi. Eski kirim va xarajatlar, hatto izohida mijoz
+ismi bo'lsa ham, mijozlarga avtomatik biriktirilmaydi va o'zgartirilmaydi.
+
+1. `👥 Mijozlar` → `➕ Mijoz qo'shish` → mijozning ismini yozing.
+2. Keyingi safar shu mijozni ro'yxatdagi tugmasidan tanlang.
+3. Mijoz oynasida `💰 Mijozdan pul oldim` → so'm, dollar yoki karta → miqdorni yozing.
+4. Shu oynaga `Material 150000` yoki `Furnituraga 300$` yozsangiz, xarajat tanlangan mijozga yoziladi.
+5. Kartadan xarajat uchun `💳 Mijoz uchun kartadan` tugmasini bosing, keyin `Usta 200000` deb yozing.
+6. `📒 Mijoz hisobi` barcha kirim va xarajatlarni, jami olingan, ishlatilgan va qolgan pulni ko'rsatadi.
+
+Mijoz hisobidagi so'm (naqd va karta birga) va dollar alohida yuritiladi.
+Mijoz qoldig'i — undan olingan puldan unga sarflangan pul ayirmasi; ko'proq
+sarflansa, minus ko'rinadi. Dollar avtomatik ravishda so'mga aylantirilmaydi.
+Har bir operatsiya umumiy naqd, dollar yoki karta qoldig'iga ham bir marta ta'sir qiladi.
+Karta xarajati uchun umumiy kartadagi pul yetarli bo'lishi kerak.
+
+Yozuv saqlangach mijoz oynasi ochiq qoladi. `/cancel` joriy kiritishni bekor qilib,
+shu mijozga qaytaradi. Boshqa mijozga o'tish uchun `👥 Mijozlar`ni, umumiy hisobga
+qaytish uchun `⬅️ Asosiy menyu`ni bosing. Oddiy `💰 Pul oldim` tugmasi umumiy kirim uchun.
+
+Mijoz nomi 80 belgigacha bo'lishi mumkin. Katta-kichik harf va ortiqcha bo'shliqlar
+bilan farqlanadigan nom qayta qo'shilsa, mavjud hisob ochiladi. Ismi bir xil ikki
+mijoz uchun familiya yoki boshqa farqlovchi izohni nomga qo'shing.
+Ro'yxat uzun bo'lsa, keyingi va oldingi sahifa tugmalari chiqadi.
+Mijozlar va ularning yozuvlari bazada saqlanadi; bot qayta ishga tushganda mijozni qayta tanlang.
+
+## Boshqa xarajatlar
+
+`🧾 Boshqa xarajatlar` oynasida `Ijara 200000` yoki `Transport 20$` deb yozing.
+Kartadan to'lov uchun `💳 Boshqa xarajat kartadan` tugmasini bosing.
+Bu yozuvlar hech bir mijozga biriktirilmaydi, umumiy kassadan ayiriladi.
+`📒 Boshqa xarajatlar hisobi` mijozga biriktirilmagan barcha xarajatlarni va jami
+sarflangan so'm hamda dollarni ko'rsatadi. Eski mijozsiz xarajatlar ham shu ro'yxatda qoladi.
+Asosiy menyuda avvalgidek to'g'ridan-to'g'ri yozilgan xarajatlar ham mijozsiz saqlanadi.
 
 ## Dollar xarajatlari
 
@@ -84,6 +123,7 @@ Kartadagi mablag' yetarli bo'lmasa, xarajat yozilmaydi. Har bir karta xarajati u
 Hisobotni oladigan odamga har bir kirim va xarajat alohida yuboriladi.
 Xabarda hisob turi (naqd so'm, dollar yoki karta), summa, vaqt, kirimda kimdan olingani
 (kiritilgan bo'lsa) va xarajatda izohi ko'rsatiladi.
+Mijoz oynasidan yozilgan kirim va xarajat xabarida mijozning nomi ham chiqadi.
 Qoldiqlar, statistika, tarix, dollar maydalash va reset haqidagi xabarlar unga yuborilmaydi.
 Kassa amallari va to'liq hisobotlar faqat `CASHIER_ID` dagi kassir uchun ochiq.
 
@@ -118,14 +158,19 @@ git pull --ff-only
 sh run.sh
 ```
 
-Yangi kod birinchi ishga tushganda mavjud bazaga hisob turini qo'shadi.
-Oldingi operatsiyalar naqd hisobda qoladi, karta hisobi 0 dan boshlanadi.
+Yangi kod birinchi ishga tushganda mavjud bazaga mijozlar uchun bo'sh ro'yxat va
+operatsiyaga mijozni biriktirish maydonini qo'shadi. Eski operatsiyalar, ularning
+summalari, naqd/karta hisobi va qoldiqlari saqlanadi; ularga mijoz biriktirilmaydi.
 Mahalliy `.env` va `kassa.db` saqlanadi. Telegramda `/start` yuborib yangi menyuni oching.
+
+`/reset` tasdiqlanganda mijozlarning kirim va xarajatlari ham umumiy tarix bilan
+birga tozalanadi. Mijoz nomlari qoladi, ularning hisoblari 0 bo'ladi.
+Avval olinadigan baza zaxirasi mijozlarni ham, barcha operatsiyalarni ham saqlaydi.
 
 ## Tekshirish
 
 ```sh
-.venv/bin/python -m unittest -v test_kassa.py
+.venv/bin/python -m unittest -v test_kassa.py test_clients.py
 ```
 
 Testlar vaqtinchalik bazadan foydalanadi; Telegramga haqiqiy xabar yubormaydi.
