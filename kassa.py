@@ -45,6 +45,7 @@ RESET_CONFIRM = 4
 CARD_EXPENSE = 5
 STATISTICS_PERIOD = 6
 CLIENT_LIST, CLIENT_NAME, CLIENT_MENU, OTHER_MENU = range(7, 11)
+CLIENT_SPLIT_USD, CLIENT_SPLIT_CARD = range(11, 13)
 
 CARD_BUTTON = "💳 Karta"
 CARD_EXPENSE_BUTTON = "💳 Kartadan"
@@ -53,6 +54,7 @@ BACK_BUTTON = "⬅️ Asosiy menyu"
 CLIENTS_BUTTON = "👥 Mijozlar"
 ADD_CLIENT_BUTTON = "➕ Mijoz qo'shish"
 CLIENT_INCOME_BUTTON = "💰 Mijozdan pul oldim"
+CLIENT_SPLIT_BUTTON = "💵 Dollar + 💳 Karta"
 CLIENT_CASH_BUTTON = "💸 Mijozga naqd xarajat"
 CLIENT_CARD_BUTTON = "💳 Mijoz uchun kartadan"
 CLIENT_REPORT_BUTTON = "📒 Mijoz hisobi"
@@ -89,6 +91,11 @@ CURRENCY_KEYBOARD = ReplyKeyboardMarkup(
         [CARD_BUTTON],
         ["⬅️ Bekor qilish"],
     ],
+    resize_keyboard=True
+)
+
+CLIENT_CURRENCY_KEYBOARD = ReplyKeyboardMarkup(
+    [["🇺🇿 So'm", "🇺🇸 Dollar"], [CARD_BUTTON, CLIENT_SPLIT_BUTTON], ["⬅️ Bekor qilish"]],
     resize_keyboard=True
 )
 
@@ -219,6 +226,22 @@ def add_transaction(kind, currency, amount, note="", actor_id=None, account="cas
                 account,
                 client_id
             )
+        )
+
+
+def add_split_client_income(client_id, usd_cents, card_amount, actor_id=None):
+    if client_id is None or not (0 < usd_cents <= 9223372036854775807 and 0 < card_amount <= 9223372036854775807):
+        raise ValueError("Mijoz va ikkala musbat summa kerak")
+    created_at = now_text()
+    with closing(sqlite3.connect(DB_PATH)) as conn, conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.executemany(
+            "INSERT INTO transactions (created_at, kind, currency, amount, note, actor_id, account, client_id) "
+            "VALUES (?, 'income', ?, ?, ?, ?, ?, ?)",
+            [
+                (created_at, "USD", usd_cents, "Dollar olindi", actor_id, "cash", client_id),
+                (created_at, "UZS", card_amount, "Kartaga pul olindi", actor_id, "card", client_id),
+            ]
         )
 
 
@@ -595,7 +618,18 @@ async def client_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except (sqlite3.Error, OSError):
         await update.message.reply_text("❌ Mijoz saqlanmadi. Qayta urinib ko'ring.", reply_markup=CANCEL_KEYBOARD)
         return CLIENT_NAME
-    return await show_client(update, context, client)
+    return await client_income_prompt(update, context, client)
+
+
+async def client_income_prompt(update, context, client):
+    context.chat_data.clear()
+    context.chat_data.update(expense_scope="client", client_id=client[0])
+    await update.message.reply_text(
+        f"👤 Mijoz: {client[1]}\n\nPulni qaysi hisobga oldingiz?\n"
+        "So'm, dollar, karta yoki dollar + kartani tanlang.",
+        reply_markup=CLIENT_CURRENCY_KEYBOARD
+    )
+    return CHOOSE_CURRENCY
 
 
 async def show_client(update, context, client):
@@ -619,9 +653,7 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await clients_start(update, context)
     text = update.message.text
     if text == CLIENT_INCOME_BUTTON:
-        await update.message.reply_text(f"👤 Mijoz: {client[1]}\n\nPulni qaysi hisobga oldingiz?",
-                                        reply_markup=CURRENCY_KEYBOARD)
-        return CHOOSE_CURRENCY
+        return await client_income_prompt(update, context, client)
     if text == CLIENT_REPORT_BUTTON:
         return await show_statement(update, context, client)
     if text in (CLIENT_CASH_BUTTON, CLIENT_CARD_BUTTON):
@@ -755,6 +787,14 @@ async def choose_currency(
     client = active_client(context)
     if context.chat_data.get("expense_scope") == "client" and client is None:
         return await clients_start(update, context)
+    if text == CLIENT_SPLIT_BUTTON:
+        if client is None:
+            return await currency_invalid(update, context)
+        await update.message.reply_text(
+            f"👤 Mijoz: {client[1]}\n\nAvval necha dollar oldingiz?\nMasalan: 300",
+            reply_markup=CANCEL_KEYBOARD
+        )
+        return CLIENT_SPLIT_USD
     if client is not None:
         choices = {"🇺🇿 So'm": ("UZS", "cash"), "🇺🇸 Dollar": ("USD", "cash"), CARD_BUTTON: ("UZS", "card")}
         currency, account = choices[text]
@@ -762,8 +802,9 @@ async def choose_currency(
         context.chat_data["income_account"] = account
         unit = "dollar" if currency == "USD" else "so'm"
         example = "300" if currency == "USD" else "500000"
+        question = "Kartaga necha so'm oldingiz?" if account == "card" else f"Necha {unit} oldingiz?"
         await update.message.reply_text(
-            f"👤 Mijoz: {client[1]}\n\nNecha {unit} oldingiz?\nMasalan: {example}",
+            f"👤 Mijoz: {client[1]}\n\n{question}\nMasalan: {example}",
             reply_markup=CANCEL_KEYBOARD
         )
         return INCOME_AMOUNT
@@ -869,8 +910,71 @@ async def income_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def currency_invalid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await reject_if_not_cashier(update):
         return ConversationHandler.END
-    await update.message.reply_text("Hisobni tugmadan tanlang: so'm, dollar yoki karta.", reply_markup=CURRENCY_KEYBOARD)
+    client = active_client(context)
+    choices = "so'm, dollar, karta yoki dollar + karta" if client else "so'm, dollar yoki karta"
+    await update.message.reply_text(f"Hisobni tugmadan tanlang: {choices}.",
+                                    reply_markup=CLIENT_CURRENCY_KEYBOARD if client else CURRENCY_KEYBOARD)
     return CHOOSE_CURRENCY
+
+
+async def client_split_usd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await reject_if_not_cashier(update):
+        return ConversationHandler.END
+    client = active_client(context)
+    if client is None:
+        return await clients_start(update, context)
+    try:
+        usd_cents = parse_usd(update.message.text)
+    except (ValueError, InvalidOperation):
+        await update.message.reply_text("❌ Dollar miqdorini to'g'ri kiriting. Masalan: 300 yoki 12.50.",
+                                        reply_markup=CANCEL_KEYBOARD)
+        return CLIENT_SPLIT_USD
+    context.chat_data["split_usd_cents"] = usd_cents
+    await update.message.reply_text(
+        f"👤 Mijoz: {client[1]}\nDollar: {format_usd(usd_cents)}\n\n"
+        "Endi kartaga necha so'm oldingiz?\nMasalan: 500000\n\n"
+        "Karta summasini kiritsangiz, ikkala kirim birga saqlanadi.",
+        reply_markup=CANCEL_KEYBOARD
+    )
+    return CLIENT_SPLIT_CARD
+
+
+async def client_split_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await reject_if_not_cashier(update):
+        return ConversationHandler.END
+    client = active_client(context)
+    if client is None:
+        return await clients_start(update, context)
+    usd_cents = context.chat_data.get("split_usd_cents")
+    if usd_cents is None:
+        return await client_income_prompt(update, context, client)
+    try:
+        card_amount = parse_uzs(update.message.text)
+    except (ValueError, InvalidOperation):
+        await update.message.reply_text("❌ Kartaga tushgan so'mni to'g'ri kiriting. Masalan: 500000.",
+                                        reply_markup=CANCEL_KEYBOARD)
+        return CLIENT_SPLIT_CARD
+    try:
+        add_split_client_income(client[0], usd_cents, card_amount, update.effective_user.id)
+    except (sqlite3.Error, OSError) as exc:
+        print("Dollar va karta kirimini saqlashda xato:", type(exc).__name__)
+        await update.message.reply_text("❌ Kirimlar saqlanmadi. Karta summasini qayta yuboring yoki bekor qiling.",
+                                        reply_markup=CANCEL_KEYBOARD)
+        return CLIENT_SPLIT_CARD
+    context.chat_data.clear()
+    context.chat_data.update(expense_scope="client", client_id=client[0])
+    _, totals = get_statement(client[0])
+    await update.message.reply_text(
+        f"✅ Kirimlar qabul qilindi\n👤 Mijoz: {client[1]}\n\n"
+        f"Dollar: +{format_usd(usd_cents)}\nKarta: +{format_uzs(card_amount)} so'm\n\n"
+        f"{client_totals_text(totals)}",
+        reply_markup=CLIENT_KEYBOARD
+    )
+    await send_transaction_report(update, context, "income", "USD", usd_cents,
+                                  client_name=client[1], reply_markup=CLIENT_KEYBOARD)
+    await send_transaction_report(update, context, "income", "UZS", card_amount, account="card",
+                                  client_name=client[1], reply_markup=CLIENT_KEYBOARD)
+    return CLIENT_MENU
 
 
 # =========================================================
@@ -1033,6 +1137,7 @@ async def expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🇺🇿 So'm", "🇺🇸 Dollar", CARD_BUTTON, CARD_EXPENSE_BUTTON,
         STATISTICS_BUTTON, BACK_BUTTON, RESET_CONFIRM_TEXT, *STATISTICS_PERIODS,
         CLIENTS_BUTTON, ADD_CLIENT_BUTTON, CLIENT_INCOME_BUTTON, CLIENT_CASH_BUTTON,
+        CLIENT_SPLIT_BUTTON,
         CLIENT_CARD_BUTTON, CLIENT_REPORT_BUTTON, OTHER_BUTTON, OTHER_CASH_BUTTON,
         OTHER_CARD_BUTTON, OTHER_REPORT_BUTTON, PREV_CLIENTS_BUTTON, NEXT_CLIENTS_BUTTON,
     }:
@@ -1444,6 +1549,14 @@ def main():
                 MessageHandler(filters.Regex("^⬅️ Bekor qilish$"), cancel),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, client_create),
             ],
+            CLIENT_SPLIT_USD: [
+                MessageHandler(filters.Regex("^⬅️ Bekor qilish$"), cancel),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, client_split_usd),
+            ],
+            CLIENT_SPLIT_CARD: [
+                MessageHandler(filters.Regex("^⬅️ Bekor qilish$"), cancel),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, client_split_card),
+            ],
             CLIENT_MENU: [
                 MessageHandler(filters.Regex("^⬅️ Bekor qilish$"), cancel),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, client_menu),
@@ -1481,7 +1594,7 @@ def main():
                 ),
                 MessageHandler(
                     filters.Regex(
-                        r"^(🇺🇿 So'm|🇺🇸 Dollar|💳 Karta)$"
+                        rf"^(🇺🇿 So'm|🇺🇸 Dollar|💳 Karta|{re.escape(CLIENT_SPLIT_BUTTON)})$"
                     ),
                     choose_currency
                 ),

@@ -67,11 +67,18 @@ Mijozlar ro'yxati bo'sh boshlanadi. Eski kirim va xarajatlar, hatto izohida mijo
 ismi bo'lsa ham, mijozlarga avtomatik biriktirilmaydi va o'zgartirilmaydi.
 
 1. `👥 Mijozlar` → `➕ Mijoz qo'shish` → mijozning ismini yozing.
-2. Keyingi safar shu mijozni ro'yxatdagi tugmasidan tanlang.
-3. Mijoz oynasida `💰 Mijozdan pul oldim` → so'm, dollar yoki karta → miqdorni yozing.
+2. Ismni yozgach bot darhol kirim turini so'raydi: so'm, dollar, karta yoki `💵 Dollar + 💳 Karta`.
+3. Kerakli hisobni tanlang va miqdorni yozing. `Dollar + Karta` bo'lsa, avval dollarni,
+   keyin kartaga tushgan so'mni yozasiz. Masalan: `300` dollar, keyin `500000` so'm karta.
 4. Shu oynaga `Material 150000` yoki `Furnituraga 300$` yozsangiz, xarajat tanlangan mijozga yoziladi.
 5. Kartadan xarajat uchun `💳 Mijoz uchun kartadan` tugmasini bosing, keyin `Usta 200000` deb yozing.
 6. `📒 Mijoz hisobi` barcha kirim va xarajatlarni, jami olingan, ishlatilgan va qolgan pulni ko'rsatadi.
+
+`Dollar + Karta` kirimining ikkala qismi karta summasi kiritilgach birga saqlanadi.
+O'rtada bekor qilinsa, pul yozilmaydi; mijozning nomi saqlanadi. Hozircha pul
+olinmagan bo'lsa ham `/cancel` bilan mijoz oynasiga o'tishingiz mumkin.
+Keyingi safar mijozni ro'yxatdan tanlang. Yana kirim qo'shish uchun uning oynasida
+`💰 Mijozdan pul oldim`ni bosing — shu to'rtta variant yana chiqadi.
 
 Mijoz hisobidagi so'm (naqd va karta birga) va dollar alohida yuritiladi.
 Mijoz qoldig'i — undan olingan puldan unga sarflangan pul ayirmasi; ko'proq

@@ -11,6 +11,8 @@ class ClientTests(BotTestCase):
         await self.send(kassa.CLIENTS_BUTTON, chat_id=chat_id)
         await self.send(kassa.ADD_CLIENT_BUTTON, chat_id=chat_id)
         await self.send(name, chat_id=chat_id)
+        # These tests start with an empty client; leave the new initial-income prompt.
+        await self.send("/cancel", chat_id=chat_id)
         return next(row for row in kassa.get_clients() if row[1] == name)
 
     async def open_client(self, client, chat_id=None):
@@ -316,6 +318,155 @@ class ClientTests(BotTestCase):
             self.assertEqual(conn.execute("SELECT id, name FROM clients").fetchall(), [client])
         await self.open_client(client)
         self.assertIn("Olingan: 0 so'm", self.request.messages[-1])
+
+
+class InitialClientIncomeTests(BotTestCase):
+    async def start_client(self, name="Ali", chat_id=None):
+        await self.send(kassa.CLIENTS_BUTTON, chat_id=chat_id)
+        await self.send(kassa.ADD_CLIENT_BUTTON, chat_id=chat_id)
+        await self.send(name, chat_id=chat_id)
+        self.assertIn("Pulni qaysi hisobga oldingiz?", self.request.messages[-1])
+        self.assertEqual(self.request.sent[-1]["reply_markup"], kassa.CLIENT_CURRENCY_KEYBOARD.to_dict())
+        return next(row for row in kassa.get_clients() if row[1] == name)
+
+    def reports(self):
+        return [m["text"] for m in self.request.sent if m["chat_id"] == kassa.REPORT_CHAT_ID]
+
+    async def test_name_immediately_prompts_for_account_then_amount_for_each_single_account(self):
+        for name, button, amount, currency, value, account in (
+            ("Ali", "🇺🇿 So'm", "500000", "UZS", 500000, "cash"),
+            ("Vali", "🇺🇸 Dollar", "12.50", "USD", 1250, "cash"),
+            ("Salim", kassa.CARD_BUTTON, "200000", "UZS", 200000, "card"),
+        ):
+            before = self.rows(self.db_path)
+            balance_before = kassa.get_balance(currency, account)
+            client = await self.start_client(name)
+            self.assertEqual(self.rows(self.db_path), before)
+            await self.send(button)
+            self.assertIn("necha" if account == "card" else "Necha", self.request.messages[-1])
+            await self.send(amount)
+            self.assertEqual(len(self.rows(self.db_path)), len(before) + 1)
+            row = self.rows(self.db_path)[-1]
+            self.assertEqual((row[2], row[3], row[4], row[7], row[8]), ("income", currency, value, account, client[0]))
+            self.assertEqual(kassa.get_balance(currency, account), balance_before + value)
+            self.assertIn(f"Mijoz: {name}", self.reports()[-1])
+            self.assertEqual(self.request.sent[-2]["reply_markup"], kassa.CLIENT_KEYBOARD.to_dict())
+
+    async def test_dollar_then_card_records_both_only_after_second_amount(self):
+        client = await self.start_client()
+        await self.send(kassa.CLIENT_SPLIT_BUTTON)
+        self.assertIn("Avval necha dollar", self.request.messages[-1])
+        await self.send("300.50$")
+        self.assertIn("Endi kartaga necha so'm", self.request.messages[-1])
+        self.assertEqual(self.rows(self.db_path), self.original_rows)
+        self.assertEqual(self.reports(), [])
+        self.assertEqual(kassa.get_statement(client[0])[0], [])
+        await self.send("500 000")
+        new_rows = self.rows(self.db_path)[len(self.original_rows):]
+        self.assertEqual([(r[2], r[3], r[4], r[7], r[8]) for r in new_rows], [
+            ("income", "USD", 30050, "cash", client[0]),
+            ("income", "UZS", 500000, "card", client[0]),
+        ])
+        self.assertEqual(new_rows[0][1], new_rows[1][1])
+        self.assertEqual(kassa.get_balance("USD"), 40050)
+        self.assertEqual(kassa.get_balance("UZS", "card"), 500000)
+        self.assertEqual(kassa.get_balance("UZS"), 1600000)
+        self.assertEqual(len(self.reports()), 2)
+        self.assertIn("Hisob: 💵 Naqd dollar", self.reports()[0])
+        self.assertIn("➕ $300.50", self.reports()[0])
+        self.assertIn("Hisob: 💳 Karta", self.reports()[1])
+        self.assertIn("➕ 500 000 so'm", self.reports()[1])
+        self.assertTrue(all("Mijoz: Ali" in m and "qoldiq" not in m.lower() for m in self.reports()))
+        await self.send("Material 100000")
+        self.assertEqual(self.rows(self.db_path)[-1][8], client[0])
+        self.assertEqual(kassa.get_statement(client[0])[1], {
+            "UZS": {"income": 500000, "expense": 100000},
+            "USD": {"income": 30050, "expense": 0},
+        })
+
+    async def test_invalid_split_amounts_can_retry_without_partial_income(self):
+        client = await self.start_client()
+        await self.send(kassa.CLIENT_SPLIT_BUTTON)
+        for amount in ("0", "-3", "NaN", "0.001", "92233720368547758.08"):
+            await self.send(amount)
+            self.assertIn("❌ Dollar", self.request.messages[-1])
+            self.assertEqual(self.rows(self.db_path), self.original_rows)
+        await self.send("12,50")
+        for amount in ("0", "-100", "300$", "9223372036854775808"):
+            await self.send(amount)
+            self.assertIn("❌ Kartaga", self.request.messages[-1])
+            self.assertEqual(self.rows(self.db_path), self.original_rows)
+        self.assertEqual(self.reports(), [])
+        await self.send("200000")
+        self.assertEqual(kassa.get_statement(client[0])[1], {
+            "UZS": {"income": 200000, "expense": 0}, "USD": {"income": 1250, "expense": 0},
+        })
+
+    async def test_cancel_at_every_initial_income_stage_keeps_only_client_name(self):
+        for index, steps in enumerate(([], ["🇺🇿 So'm"], [kassa.CLIENT_SPLIT_BUTTON], [kassa.CLIENT_SPLIT_BUTTON, "300"])):
+            client = await self.start_client(f"Mijoz {index}")
+            for step in steps:
+                await self.send(step)
+            await self.send("/cancel")
+            self.assertIn(f"MIJOZ: {client[1]}", self.request.messages[-1])
+            self.assertEqual(self.rows(self.db_path), self.original_rows)
+            self.assertEqual(kassa.get_statement(client[0])[0], [])
+        self.assertEqual(len(kassa.get_clients()), 4)
+        self.assertEqual(self.reports(), [])
+
+    async def test_switching_client_discards_pending_split_and_later_income_stays_single(self):
+        ali = await self.start_client("Ali")
+        await self.send(kassa.CLIENT_SPLIT_BUTTON)
+        await self.send("300")
+        vali = await self.start_client("Vali")
+        await self.send(kassa.CARD_BUTTON)
+        await self.send("500000")
+        self.assertEqual(kassa.get_statement(ali[0])[0], [])
+        self.assertEqual(len(kassa.get_statement(vali[0])[0]), 1)
+        self.assertEqual(kassa.get_balance("USD"), 10000)
+        await self.send(kassa.CLIENT_INCOME_BUTTON)
+        await self.send("🇺🇸 Dollar")
+        await self.send("20")
+        self.assertEqual(len(kassa.get_statement(vali[0])[0]), 2)
+        self.assertEqual(kassa.get_balance("USD"), 12000)
+        self.assertEqual(len(self.reports()), 2)
+
+    async def test_failure_on_second_insert_rolls_back_both_and_retry_records_once(self):
+        client = await self.start_client()
+        await self.send(kassa.CLIENT_SPLIT_BUTTON)
+        await self.send("300")
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            conn.execute("""
+                CREATE TRIGGER fail_card_income BEFORE INSERT ON transactions
+                WHEN NEW.kind = 'income' AND NEW.account = 'card'
+                BEGIN SELECT RAISE(ABORT, 'Simulated card insert failure'); END
+            """)
+        await self.send("500000")
+        self.assertIn("Kirimlar saqlanmadi", self.request.messages[-1])
+        self.assertEqual(self.rows(self.db_path), self.original_rows)
+        self.assertEqual(kassa.get_statement(client[0])[0], [])
+        self.assertEqual(self.reports(), [])
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            conn.execute("DROP TRIGGER fail_card_income")
+        await self.send("500000")
+        self.assertEqual(len(kassa.get_statement(client[0])[0]), 2)
+        self.assertEqual(len(self.reports()), 2)
+
+    async def test_failed_reports_keep_both_incomes_and_allow_new_income(self):
+        client = await self.start_client()
+        self.request.fail_chat_ids.add(kassa.REPORT_CHAT_ID)
+        await self.send(kassa.CLIENT_SPLIT_BUTTON)
+        await self.send("300")
+        await self.send("500000")
+        self.assertEqual(len(kassa.get_statement(client[0])[0]), 2)
+        self.assertIn("Kirim saqlandi", self.request.messages[-1])
+        self.assertEqual(self.request.sent[-1]["reply_markup"], kassa.CLIENT_KEYBOARD.to_dict())
+        await self.send(kassa.CLIENT_INCOME_BUTTON)
+        await self.send(kassa.CARD_BUTTON)
+        await self.send("100000")
+        self.assertEqual(len(kassa.get_statement(client[0])[0]), 3)
+        self.assertEqual(kassa.get_balance("USD"), 40000)
+        self.assertEqual(kassa.get_balance("UZS", "card"), 600000)
 
 
 class ClientMigrationTests(BotTestCase):
