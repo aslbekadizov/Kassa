@@ -819,8 +819,7 @@ def client_totals_text(totals):
         expense = totals[currency]["expense"]
         lines.append(
             f"{label}\nOlingan: {format_money(income, currency)}\n"
-            f"Ishlatilgan: {format_money(expense, currency)}\n"
-            f"Mijoz qoldig'i: {format_money(income - expense, currency)}"
+            f"Ishlatilgan: {format_money(expense, currency)}"
         )
     return "\n\n".join(lines)
 
@@ -1158,9 +1157,6 @@ async def income_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"👤 {source_note}")
     lines.extend([f"➕ {format_money(amount, currency)}", f"{label}: {format_money(balance, currency)}"])
     if client:
-        _, totals = get_statement(client[0])
-        remaining = totals[currency]["income"] - totals[currency]["expense"]
-        lines.append(f"Mijoz qoldig'i: {format_money(remaining, currency)}")
         context.chat_data.pop("income_currency", None)
         context.chat_data.pop("income_account", None)
     else:
@@ -1482,18 +1478,13 @@ async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, acc
     balance_text = format_usd(account_balance) if currency == "USD" else f"{format_uzs(account_balance)} so'm"
     client_line = f"👤 Mijoz: {client[1]}\n" if client else ""
     balance_label = f"Umumiy kassa — {account_label}" if client else account_label
-    client_balance_line = ""
-    if client:
-        _, totals = get_statement(client[0])
-        remaining = totals[currency]["income"] - totals[currency]["expense"]
-        client_balance_line = f"\nMijoz qoldig'i: {format_money(remaining, currency)}"
     await update.message.reply_text(
         "🔴 Xarajat yozildi\n\n"
         f"{client_line}"
         f"📝 {name}\n"
         f"Manba: {account_label}\n"
         f"➖ {amount_text}\n\n"
-        f"{balance_label} qoldiq: {balance_text}{client_balance_line}",
+        f"{balance_label} qoldiq: {balance_text}",
         reply_markup=keyboard
     )
 
@@ -1729,7 +1720,7 @@ async def reset_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "💵 Dollar: $0\n"
         "💳 Karta: 0 so'm\n"
         "📋 Operatsiyalar tarixi tozalandi.\n\n"
-        "Mijozlarning qoldiqlari ham 0 bo'ldi, mijoz nomlari saqlandi.\n\n"
+        "Mijozlarning yozuvlari tozalandi, mijoz nomlari saqlandi.\n\n"
         "Zaxira nusxasi saqlandi. Endi yangidan boshlashingiz mumkin.",
         reply_markup=MAIN_KEYBOARD
     )

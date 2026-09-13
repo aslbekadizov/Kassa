@@ -42,7 +42,8 @@ class ClientTests(BotTestCase):
         self.assertEqual((kassa.get_balance("UZS"), kassa.get_balance("USD")), balances)
         self.assertTrue(all(row[-1] is None for row in original))
         self.assertIn("Olingan: 0 so'm", self.request.messages[-1])
-        self.assertIn("Mijoz qoldig'i: $0", self.request.messages[-1])
+        self.assertIn("Olingan: $0", self.request.messages[-1])
+        self.assertNotIn("Mijoz qoldig'i", self.request.messages[-1])
         kassa.init_db()
         self.assertEqual(kassa.get_clients(), [client])
         self.assertEqual(self.rows(self.db_path), original)
@@ -76,7 +77,9 @@ class ClientTests(BotTestCase):
         self.assertTrue(all("Mijoz: Vali" in report for report in self.reports()[6:]))
         self.assertTrue(all("qoldiq" not in report.lower() for report in self.reports()))
         await self.send(kassa.CLIENT_REPORT_BUTTON)
-        self.assertIn("Mijoz qoldig'i: -150 000 so'm", self.request.messages[-1])
+        self.assertIn("Olingan: 100 000 so'm", self.request.messages[-1])
+        self.assertIn("Ishlatilgan: 250 000 so'm", self.request.messages[-1])
+        self.assertNotIn("Mijoz qoldig'i", self.request.messages[-1])
         self.assertNotIn("Furnituraga", self.request.messages[-1])
         self.assertEqual(len(self.reports()), 8)
 
@@ -110,7 +113,7 @@ class ClientTests(BotTestCase):
         self.assertIsNone(self.rows(self.db_path)[-1][-1])
         self.assertEqual(kassa.get_statement(client[0]), before_client)
 
-    async def test_card_expense_checks_global_card_funds_but_client_may_be_negative(self):
+    async def test_card_expense_uses_global_funds_even_without_client_income(self):
         client = await self.create_client("Ali")
         before = self.rows(self.db_path)
         await self.send(kassa.CLIENT_CARD_BUTTON)
@@ -249,7 +252,8 @@ class ClientTests(BotTestCase):
         for name in names:
             self.assertEqual(text.count(name), 1)
         self.assertIn("Ishlatilgan: 25 000 so'm", chunks[-1])
-        self.assertIn("Mijoz qoldig'i: 475 000 so'm", chunks[-1])
+        self.assertIn("Olingan: 500 000 so'm", chunks[-1])
+        self.assertNotIn("Mijoz qoldig'i", text)
         self.assertNotIn("Sinov xarajat", text)
         self.assertTrue(all(len(chunk.encode("utf-16-le")) // 2 <= 4000 for chunk in chunks))
         self.assertEqual(self.reports(), [])

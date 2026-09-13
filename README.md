@@ -97,7 +97,7 @@ ismi bo'lsa ham, mijozlarga avtomatik biriktirilmaydi va o'zgartirilmaydi.
    keyin kartaga tushgan so'mni yozasiz. Masalan: `300` dollar, keyin `500000` so'm karta.
 4. Shu oynaga `Material 150000` yoki `Furnituraga 300$` yozsangiz, xarajat tanlangan mijozga yoziladi.
 5. Kartadan xarajat uchun `💳 Mijoz uchun kartadan` tugmasini bosing, keyin `Usta 200000` deb yozing.
-6. `📒 Mijoz hisobi` barcha kirim va xarajatlarni, jami olingan, ishlatilgan va qolgan pulni ko'rsatadi.
+6. `📒 Mijoz hisobi` barcha kirim va xarajatlarni, jami olingan va ishlatilgan pulni ko'rsatadi.
 
 `Dollar + Karta` kirimining ikkala qismi karta summasi kiritilgach birga saqlanadi.
 O'rtada bekor qilinsa, pul yozilmaydi; mijozning nomi saqlanadi. Hozircha pul
@@ -106,8 +106,10 @@ Keyingi safar mijozni ro'yxatdan tanlang. Yana kirim qo'shish uchun uning oynasi
 `💰 Mijozdan pul oldim`ni bosing — shu to'rtta variant yana chiqadi.
 
 Mijoz hisobidagi so'm (naqd va karta birga) va dollar alohida yuritiladi.
-Mijoz qoldig'i — undan olingan puldan unga sarflangan pul ayirmasi; ko'proq
-sarflansa, minus ko'rinadi. Dollar avtomatik ravishda so'mga aylantirilmaydi.
+Pul umumiy kassada yuritiladi: undan istalgan mijozga yoki xodimga sarflash mumkin.
+Mijozdan hali pul olinmagan bo'lsa ham unga xarajat yoziladi. Mijoz uchun alohida
+qoldiq yoki minus hisoblanmaydi; faqat undan olingan va unga ishlatilgan pul ko'rsatiladi.
+Dollar avtomatik ravishda so'mga aylantirilmaydi.
 Har bir operatsiya umumiy naqd, dollar yoki karta qoldig'iga ham bir marta ta'sir qiladi.
 Karta xarajati uchun umumiy kartadagi pul yetarli bo'lishi kerak.
 
