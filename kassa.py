@@ -774,7 +774,7 @@ async def employee_amount(update, context, retry_state=EMPLOYEE_AMOUNT):
         return retry_state
     session.clear()
     session["employee_id"] = employee[0]
-    await update.message.reply_text(f"✅ {employee[1]} xodimga {format_money(amount, currency)} pul berildi.", reply_markup=employee_keyboard(update))
+    await update.message.reply_text(f"{employee[1]}ga {format_money(amount, currency)} berildi.", reply_markup=employee_keyboard(update))
     await send_transaction_report(update, context, "expense", currency, amount, account=account, note=note,
                                   employee_name=employee[1], reply_markup=employee_keyboard(update))
     return EMPLOYEE_MENU
@@ -1003,16 +1003,15 @@ async def send_transaction_report(
     account_label = "💳 Karta" if account == "card" else "💵 Naqd dollar" if currency == "USD" else "💰 Naqd so'm"
     amount_text = format_usd(amount) if currency == "USD" else f"{format_uzs(amount)} so'm"
     lines = [title, "", f"Hisob: {account_label}"]
-    if employee_name is not None:
-        lines.append(f"{employee_name} xodimga {amount_text} pul berildi.")
     if client_name is not None:
         lines.append(f"👤 Mijoz: {client_name}")
     if note:
         lines.append(f"📝 {note}")
     lines.extend([f"{sign} {amount_text}", f"🕐 {now_text()}"])
+    text = f"{employee_name}ga {amount_text} berildi." if employee_name is not None else "\n".join(lines)
 
     try:
-        await context.bot.send_message(chat_id=REPORT_CHAT_ID, text="\n".join(lines))
+        await context.bot.send_message(chat_id=REPORT_CHAT_ID, text=text)
     except TelegramError as exc:
         operation = "Kirim" if kind == "income" else "Xarajat"
         await update.message.reply_text(

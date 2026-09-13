@@ -72,8 +72,8 @@ to'lovini qayd etadi. Kartadan berilganda avval tegishli hisobni tanlang.
 Har bir to'lov umumiy kassadan bir marta ayiriladi va o'sha xodimga jamlanadi.
 Kartadagi mablag' yetarli bo'lmasa to'lov yozilmaydi.
 
-Boshliqqa, masalan, `Ali xodimga 100 000 so'm pul berildi.` degan xabar, hisob turi
-va vaqt yuboriladi. `📒 Xodim hisobi` barcha to'lovlarni, naqd so'm, kartadan,
+Boshliqqa faqat `Aliga 100 000 so'm berildi.` kabi qisqa xabar yuboriladi.
+`📒 Xodim hisobi` barcha to'lovlarni, naqd so'm, kartadan,
 jami so'm va dollar summalarini ko'rsatadi. Valyutalar bir-biriga aylantirilmaydi.
 
 `REPORT_CHAT_ID` dagi boshliq `/start` bosib `👷 Xodimlar` tugmasidan shu

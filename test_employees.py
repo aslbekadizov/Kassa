@@ -37,7 +37,7 @@ class EmployeeTests(BotTestCase):
         self.assertEqual(len(kassa.get_employee_payments(employee[0])), 3)
         self.assertEqual(len(self.reports()), 3)
         for report, amount in zip(self.reports(), ("100 000 so'm", '$12.50', "200 000 so'm")):
-            self.assertIn(f'Ali xodimga {amount} pul berildi.', report)
+            self.assertEqual(f'Aliga {amount} berildi.', report)
             self.assertNotIn('qoldiq', report.lower())
         await self.send('/start', actor_id=kassa.REPORT_CHAT_ID)
         self.assertEqual(self.request.sent[-1]['reply_markup'], kassa.BOSS_KEYBOARD.to_dict())
