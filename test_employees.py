@@ -15,7 +15,7 @@ class EmployeeTests(BotTestCase):
 
     async def select(self, employee, actor=None, chat=None):
         await self.send(kassa.EMPLOYEES_BUTTON, actor_id=actor, chat_id=chat)
-        await self.send(f'👷 #{employee[0]} — {employee[1]}', actor_id=actor, chat_id=chat)
+        await self.send(employee[1], actor_id=actor, chat_id=chat)
 
     async def pay(self, currency, amount):
         await self.send(kassa.EMPLOYEE_PAY_BUTTON)

@@ -454,7 +454,9 @@ class CardAndStatisticsTests(BotTestCase):
         await self.card_income(500000)
         await self.send("/hisob")
         self.assertIn("Karta: 500 000", self.request.messages[-1])
-        self.assertIn("Naqd so'm: 1 600 000", self.request.messages[-1])
+        self.assertEqual("Karta: 500 000 so'm\nSo'm: 1 600 000 so'm\nDollar: $100", self.request.messages[-1])
+        await self.send(kassa.BALANCE_BUTTON)
+        self.assertEqual("Karta: 500 000 so'm\nSo'm: 1 600 000 so'm\nDollar: $100", self.request.messages[-1])
         await self.send("/tarix")
         self.assertIn("💳 Karta", self.request.messages[-1])
         self.assertIn("💵 Naqd", self.request.messages[-1])
@@ -462,6 +464,7 @@ class CardAndStatisticsTests(BotTestCase):
         markup = str(self.request.sent[-1]["reply_markup"])
         self.assertIn(kassa.CARD_EXPENSE_BUTTON, markup)
         self.assertIn(kassa.STATISTICS_BUTTON, markup)
+        self.assertIn(kassa.BALANCE_BUTTON, markup)
 
     async def test_card_and_statistics_are_cashier_only(self):
         for text in (kassa.CARD_EXPENSE_BUTTON, "/kartadan", kassa.STATISTICS_BUTTON, "/statistika"):

@@ -42,7 +42,7 @@ Token, bazalar, zaxira nusxalari va loglar Git'ga qo'shilmaydi.
 - `Furnituraga 300$` — asosiy menyudan naqd dollar hisobidan 300 dollar xarajat yozish.
 - `💳 Kartadan` yoki `/kartadan` — masalan, `Ali 200000` deb kartadan xarajat yozish.
 - `📊 Statistika` yoki `/statistika` — bugun, shu oy yoki barcha vaqt bo'yicha hisobot.
-- `/hisob` — naqd so'm, dollar va karta qoldiqlari.
+- `💰 Balans` yoki `/hisob` — karta, naqd so'm va dollar qoldiqlari.
 - `/tarix` — oxirgi 10 ta operatsiya, naqd yoki karta belgisi bilan.
 - `/reset` — tasdiqlashdan keyin uchala hisob qoldig'i va tarixni tozalash. Avval `backups/` papkasiga baza zaxirasi olinadi.
 - `/cancel` — joriy amalni bekor qilish.
@@ -67,6 +67,7 @@ Faqat summani yozish ham avvalgidek ishlaydi. Karta kirimida summani yozasiz.
 tugmasini bosib ismni kiritadi. Eski yozuvlar xodimlarga avtomatik biriktirilmaydi.
 
 Xodimni tanlang → `💸 Pul berish` → so'm, dollar yoki karta → summani yozing.
+Mijozlar va xodimlar ro'yxatidagi tanlash tugmalarida faqat ism ko'rinadi.
 Xodim oynasiga to'g'ridan-to'g'ri `100000` yozish naqd so'm, `50$` yozish dollar
 to'lovini qayd etadi. Kartadan berilganda avval tegishli hisobni tanlang.
 Har bir to'lov umumiy kassadan bir marta ayiriladi va o'sha xodimga jamlanadi.

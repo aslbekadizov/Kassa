@@ -55,6 +55,7 @@ EMPLOYEE_PREV = "⬅️ Oldingi xodimlar"
 EMPLOYEE_NEXT = "➡️ Keyingi xodimlar"
 
 CARD_BUTTON = "💳 Karta"
+BALANCE_BUTTON = "💰 Balans"
 CARD_EXPENSE_BUTTON = "💳 Kartadan"
 STATISTICS_BUTTON = "📊 Statistika"
 BACK_BUTTON = "⬅️ Asosiy menyu"
@@ -88,7 +89,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         ["💰 Pul oldim", "💵 $ maydalash"],
         [CARD_EXPENSE_BUTTON, STATISTICS_BUTTON],
         [CLIENTS_BUTTON, OTHER_BUTTON],
-        [EMPLOYEES_BUTTON],
+        [EMPLOYEES_BUTTON, BALANCE_BUTTON],
     ],
     resize_keyboard=True
 )
@@ -637,7 +638,7 @@ async def show_employees(update, context, page=0):
     rows = get_employees(page)
     if not rows and page:
         page, rows = 0, get_employees()
-    choices = {f"👷 #{eid} — {name}": eid for eid, name in rows[:10]}
+    choices = {name: eid for eid, name in rows[:10]}
     session = employee_session(update, context)
     session.clear()
     session.update(page=page, choices=choices)
@@ -835,7 +836,7 @@ async def show_clients(update, context, page=0):
     if not rows and page:
         page = 0
         rows = get_clients(page)
-    choices = {f"👤 #{client_id} — {name}": client_id for client_id, name in rows[:CLIENT_PAGE_SIZE]}
+    choices = {name: client_id for client_id, name in rows[:CLIENT_PAGE_SIZE]}
     context.chat_data.clear()
     context.chat_data.update(client_page=page, client_choices=choices)
     keyboard = [[label] for label in choices]
@@ -1520,10 +1521,9 @@ async def balance(
     card = get_balance("UZS", "card")
 
     await update.message.reply_text(
-        "💼 KASSA HOLATI\n\n"
-        f"🇺🇿 Naqd so'm: {format_uzs(uzs)} so'm\n"
-        f"💵 Dollar: {format_usd(usd)}\n"
-        f"💳 Karta: {format_uzs(card)} so'm",
+        f"Karta: {format_uzs(card)} so'm\n"
+        f"So'm: {format_uzs(uzs)} so'm\n"
+        f"Dollar: {format_usd(usd)}",
         reply_markup=MAIN_KEYBOARD
     )
     return ConversationHandler.END
@@ -1787,6 +1787,7 @@ def main():
         entry_points=[
             CommandHandler("start", start),
             CommandHandler("hisob", balance),
+            MessageHandler(filters.Regex(f"^{re.escape(BALANCE_BUTTON)}$"), balance),
             CommandHandler("tarix", history),
             CommandHandler(["statistika", "stats"], statistics_start),
             CommandHandler("kartadan", card_expense_start),
