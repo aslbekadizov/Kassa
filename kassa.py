@@ -46,6 +46,13 @@ CARD_EXPENSE = 5
 STATISTICS_PERIOD = 6
 CLIENT_LIST, CLIENT_NAME, CLIENT_MENU, OTHER_MENU = range(7, 11)
 CLIENT_SPLIT_USD, CLIENT_SPLIT_CARD = range(11, 13)
+EMPLOYEE_LIST, EMPLOYEE_NAME, EMPLOYEE_MENU, EMPLOYEE_CURRENCY, EMPLOYEE_AMOUNT = range(13, 18)
+EMPLOYEES_BUTTON = "👷 Xodimlar"
+ADD_EMPLOYEE_BUTTON = "➕ Xodim qo'shish"
+EMPLOYEE_PAY_BUTTON = "💸 Pul berish"
+EMPLOYEE_REPORT_BUTTON = "📒 Xodim hisobi"
+EMPLOYEE_PREV = "⬅️ Oldingi xodimlar"
+EMPLOYEE_NEXT = "➡️ Keyingi xodimlar"
 
 CARD_BUTTON = "💳 Karta"
 CARD_EXPENSE_BUTTON = "💳 Kartadan"
@@ -81,6 +88,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         ["💰 Pul oldim", "💵 $ maydalash"],
         [CARD_EXPENSE_BUTTON, STATISTICS_BUTTON],
         [CLIENTS_BUTTON, OTHER_BUTTON],
+        [EMPLOYEES_BUTTON],
     ],
     resize_keyboard=True
 )
@@ -126,6 +134,8 @@ OTHER_KEYBOARD = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
+BOSS_KEYBOARD = ReplyKeyboardMarkup([[EMPLOYEES_BUTTON]], resize_keyboard=True)
+
 
 # =========================================================
 # DATABASE
@@ -162,6 +172,56 @@ def init_db():
         if "client_id" not in columns:
             conn.execute("ALTER TABLE transactions ADD COLUMN client_id INTEGER REFERENCES clients(id)")
         conn.execute("CREATE INDEX IF NOT EXISTS transactions_client ON transactions(client_id, created_at, id)")
+        conn.execute("CREATE TABLE IF NOT EXISTS employees (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS employee_payments (
+            transaction_id INTEGER PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,
+            employee_id INTEGER NOT NULL REFERENCES employees(id)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS payments_employee ON employee_payments(employee_id, transaction_id)")
+
+
+def add_employee(name):
+    name = " ".join(name.split())
+    if not name or len(name) > 80 or not any(c.isalnum() for c in name):
+        raise ValueError("Xodim ismi 1–80 belgi bo'lsin")
+    with closing(sqlite3.connect(DB_PATH)) as conn, conn:
+        conn.execute("INSERT INTO employees(name, name_key) VALUES (?, ?) ON CONFLICT(name_key) DO NOTHING", (name, name.casefold()))
+        return conn.execute("SELECT id, name FROM employees WHERE name_key = ?", (name.casefold(),)).fetchone()
+
+
+def get_employee(employee_id):
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        return conn.execute("SELECT id, name FROM employees WHERE id = ?", (employee_id,)).fetchone()
+
+
+def get_employees(page=0):
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        return conn.execute("SELECT id, name FROM employees ORDER BY name_key, id LIMIT 11 OFFSET ?", (page * 10,)).fetchall()
+
+
+def get_employee_payments(employee_id):
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        return conn.execute("SELECT t.created_at, t.currency, -t.amount, t.account, t.note FROM transactions t "
+                            "JOIN employee_payments p ON p.transaction_id = t.id WHERE p.employee_id = ? "
+                            "ORDER BY t.created_at, t.id", (employee_id,)).fetchall()
+
+
+def add_employee_payment(employee_id, currency, amount, account="cash", note="", actor_id=None):
+    if currency not in ("UZS", "USD") or account not in ("cash", "card") or (account == "card" and currency != "UZS"):
+        raise ValueError("Noto'g'ri hisob")
+    if not 0 < amount <= 9223372036854775807:
+        raise ValueError("Summa musbat bo'lsin")
+    with closing(sqlite3.connect(DB_PATH)) as conn, conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("BEGIN IMMEDIATE")
+        if account == "card":
+            balance = conn.execute("SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE account = 'card' AND currency = 'UZS'").fetchone()[0]
+            if amount > balance:
+                raise InsufficientCardFunds(balance)
+        cursor = conn.execute("INSERT INTO transactions(created_at, kind, currency, amount, note, actor_id, account) "
+                              "VALUES (?, 'expense', ?, ?, ?, ?, ?)",
+                              (now_text(), currency, -amount, note, actor_id, account))
+        conn.execute("INSERT INTO employee_payments(transaction_id, employee_id) VALUES (?, ?)", (cursor.lastrowid, employee_id))
 
 
 def add_client(name):
@@ -188,6 +248,8 @@ def get_clients(page=0):
 def get_statement(client_id=None):
     condition = "client_id = ? AND kind IN ('income', 'expense')" if client_id is not None else "client_id IS NULL AND kind = 'expense'"
     params = (client_id,) if client_id is not None else ()
+    if client_id is None:
+        condition += " AND NOT EXISTS (SELECT 1 FROM employee_payments p WHERE p.transaction_id = transactions.id)"
     with closing(sqlite3.connect(DB_PATH)) as conn:
         rows = conn.execute(
             "SELECT created_at, kind, currency, amount, note, account FROM transactions "
@@ -325,10 +387,13 @@ def get_history(limit=10):
         return conn.execute(
             """
             SELECT t.created_at, t.kind, t.currency, t.amount,
-                   CASE WHEN c.id IS NULL THEN t.note
+                   CASE WHEN e.id IS NOT NULL THEN 'Xodim: ' || e.name || char(10) || COALESCE(t.note, '')
+                        WHEN c.id IS NULL THEN t.note
                         ELSE 'Mijoz: ' || c.name || char(10) || COALESCE(t.note, '') END,
                    t.account
             FROM transactions t LEFT JOIN clients c ON c.id = t.client_id
+            LEFT JOIN employee_payments p ON p.transaction_id = t.id
+            LEFT JOIN employees e ON e.id = p.employee_id
             ORDER BY t.id DESC
             LIMIT ?
             """,
@@ -361,9 +426,11 @@ def get_statistics(period="all", now=None):
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
         conn.execute("BEGIN")
         expenses = conn.execute(
-            "SELECT t.created_at, CASE WHEN c.id IS NULL THEN t.note "
+            "SELECT t.created_at, CASE WHEN e.id IS NOT NULL THEN 'Xodim: ' || e.name || char(10) || COALESCE(t.note, '') "
+            "WHEN c.id IS NULL THEN t.note "
             "ELSE 'Mijoz: ' || c.name || char(10) || COALESCE(t.note, '') END, "
             "t.currency, -t.amount, t.account FROM transactions t LEFT JOIN clients c ON c.id = t.client_id "
+            "LEFT JOIN employee_payments p ON p.transaction_id = t.id LEFT JOIN employees e ON e.id = p.employee_id "
             f"WHERE {conditions} ORDER BY t.created_at ASC, t.id ASC", params
         ).fetchall()
         for _, _, currency, amount, _ in expenses:
@@ -387,6 +454,7 @@ def reset_database():
 
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
         # Zaxira olish va tozalash davomida boshqa yozuvlarni bloklaymiz.
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("BEGIN IMMEDIATE")
         with closing(sqlite3.connect(DB_PATH)) as source:
             with closing(sqlite3.connect(backup_path)) as backup:
@@ -500,6 +568,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Boshqa odam ham /start bosishi mumkin,
     # shunda bot unga keyinchalik xabar yubora oladi.
 
+    if is_boss(update) and not is_cashier(update):
+        await update.message.reply_text("Xodimlar olgan pullarni ko'rish uchun «Xodimlar»ni bosing.", reply_markup=BOSS_KEYBOARD)
+        return ConversationHandler.END
     if not is_cashier(update):
         await update.message.reply_text(
             f"Telegram ID: {update.effective_user.id}"
@@ -527,6 +598,198 @@ async def get_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Sizning Telegram ID'ingiz:\n"
         f"{update.effective_user.id}"
     )
+
+
+# =========================================================
+# XODIMLAR
+# =========================================================
+
+def is_boss(update):
+    return bool(REPORT_CHAT_ID and update.effective_user and update.effective_user.id == REPORT_CHAT_ID)
+
+
+async def employee_access(update):
+    if is_cashier(update) or is_boss(update):
+        return True
+    await update.message.reply_text("⛔ Xodimlar hisobi faqat kassir va boshliq uchun.")
+    return False
+
+
+def employee_session(update, context):
+    # Boshliq va kassir bir guruhda ham bir-birining tanlovini almashtirmaydi.
+    return context.user_data.setdefault("employee_views", {}).setdefault(update.effective_chat.id, {})
+
+
+def employee_keyboard(update):
+    rows = [[EMPLOYEE_PAY_BUTTON]] if is_cashier(update) else []
+    return ReplyKeyboardMarkup(rows + [[EMPLOYEE_REPORT_BUTTON], [EMPLOYEES_BUTTON, BACK_BUTTON]], resize_keyboard=True)
+
+
+async def employees_start(update, context):
+    if not await employee_access(update):
+        return ConversationHandler.END
+    if is_cashier(update):
+        context.chat_data.clear()
+    return await show_employees(update, context)
+
+
+async def show_employees(update, context, page=0):
+    rows = get_employees(page)
+    if not rows and page:
+        page, rows = 0, get_employees()
+    choices = {f"👷 #{eid} — {name}": eid for eid, name in rows[:10]}
+    session = employee_session(update, context)
+    session.clear()
+    session.update(page=page, choices=choices)
+    keyboard = [[label] for label in choices]
+    navigation = ([EMPLOYEE_PREV] if page else []) + ([EMPLOYEE_NEXT] if len(rows) > 10 else [])
+    if navigation:
+        keyboard.append(navigation)
+    if is_cashier(update):
+        keyboard.append([ADD_EMPLOYEE_BUTTON])
+    keyboard.append([BACK_BUTTON])
+    await update.message.reply_text("Xodimni tanlang:" if rows else "Hozircha xodim yo'q.",
+                                    reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+    return EMPLOYEE_LIST
+
+
+async def employee_select(update, context):
+    if not await employee_access(update):
+        return ConversationHandler.END
+    text = update.message.text
+    session = employee_session(update, context)
+    if text == ADD_EMPLOYEE_BUTTON:
+        if await reject_if_not_cashier(update):
+            return EMPLOYEE_LIST
+        await update.message.reply_text("Xodimning ismini yozing (80 belgigacha):", reply_markup=CANCEL_KEYBOARD)
+        return EMPLOYEE_NAME
+    if text in (EMPLOYEE_PREV, EMPLOYEE_NEXT):
+        return await show_employees(update, context, max(0, session.get("page", 0) + (1 if text == EMPLOYEE_NEXT else -1)))
+    employee = get_employee(session.get("choices", {}).get(text))
+    if employee is None:
+        await update.message.reply_text("Xodimni ro'yxatdagi tugmadan tanlang.")
+        return EMPLOYEE_LIST
+    session.clear()
+    session["employee_id"] = employee[0]
+    return await show_employee(update, context, employee)
+
+
+async def employee_create(update, context):
+    if await reject_if_not_cashier(update):
+        return ConversationHandler.END
+    try:
+        employee = add_employee(update.message.text)
+    except ValueError:
+        await update.message.reply_text("❌ Xodim ismini 1–80 belgi bilan yozing.", reply_markup=CANCEL_KEYBOARD)
+        return EMPLOYEE_NAME
+    except (sqlite3.Error, OSError):
+        await update.message.reply_text("❌ Xodim saqlanmadi. Qayta urinib ko'ring.", reply_markup=CANCEL_KEYBOARD)
+        return EMPLOYEE_NAME
+    session = employee_session(update, context)
+    session.clear()
+    session["employee_id"] = employee[0]
+    return await show_employee(update, context, employee)
+
+
+async def show_employee(update, context, employee):
+    rows = get_employee_payments(employee[0])
+    totals = {("cash", "UZS"): 0, ("cash", "USD"): 0, ("card", "UZS"): 0}
+    lines = [f"👷 XODIM: {employee[1]}", ""]
+    for index, (created_at, currency, amount, account, note) in enumerate(rows, 1):
+        totals[(account, currency)] += amount
+        source = "karta" if account == "card" else "naqd"
+        detail = f" — {note}" if note else ""
+        lines.append(f"{index}. {format_money(amount, currency)} ({source}){detail}\n{created_at[:16]}")
+    if not rows:
+        lines.append("Hozircha pul berilmagan.")
+    summary = (
+        "JAMI BERILGAN PUL\n"
+        f"Naqd so'm: {format_money(totals[('cash', 'UZS')], 'UZS')}\n"
+        f"Kartadan: {format_money(totals[('card', 'UZS')], 'UZS')}\n"
+        f"Jami so'm: {format_money(totals[('cash', 'UZS')] + totals[('card', 'UZS')], 'UZS')}\n"
+        f"Dollar: {format_usd(totals[('cash', 'USD')])}"
+    )
+    await reply_report(update, "\n".join(lines), summary, employee_keyboard(update))
+    return EMPLOYEE_MENU
+
+
+async def employee_menu(update, context):
+    if not await employee_access(update):
+        return ConversationHandler.END
+    session = employee_session(update, context)
+    employee = get_employee(session.get("employee_id"))
+    if employee is None:
+        return await employees_start(update, context)
+    if update.message.text == EMPLOYEE_REPORT_BUTTON:
+        return await show_employee(update, context, employee)
+    if await reject_if_not_cashier(update):
+        return EMPLOYEE_MENU
+    if update.message.text == EMPLOYEE_PAY_BUTTON:
+        await update.message.reply_text(f"{employee[1]} xodimga qaysi hisobdan pul berdingiz?", reply_markup=CURRENCY_KEYBOARD)
+        return EMPLOYEE_CURRENCY
+    if update.message.text.startswith(("👤 #", "👷 #")):
+        return await employees_start(update, context)
+    session["currency"] = "USD" if update.message.text.rstrip().endswith("$") else "UZS"
+    session["account"] = "cash"
+    return await employee_amount(update, context, retry_state=EMPLOYEE_MENU)
+
+
+async def employee_currency(update, context):
+    if await reject_if_not_cashier(update):
+        return ConversationHandler.END
+    choices = {"🇺🇿 So'm": ("UZS", "cash"), "🇺🇸 Dollar": ("USD", "cash"), CARD_BUTTON: ("UZS", "card")}
+    choice = choices.get(update.message.text)
+    if choice is None:
+        await update.message.reply_text("So'm, dollar yoki kartani tugmadan tanlang.", reply_markup=CURRENCY_KEYBOARD)
+        return EMPLOYEE_CURRENCY
+    session = employee_session(update, context)
+    session["currency"], session["account"] = choice
+    unit = "dollar" if choice[0] == "USD" else "so'm"
+    await update.message.reply_text(f"Necha {unit} berdingiz? Summani yozing.", reply_markup=CANCEL_KEYBOARD)
+    return EMPLOYEE_AMOUNT
+
+
+async def employee_amount(update, context, retry_state=EMPLOYEE_AMOUNT):
+    if await reject_if_not_cashier(update):
+        return ConversationHandler.END
+    session = employee_session(update, context)
+    employee = get_employee(session.get("employee_id"))
+    if employee is None:
+        return await employees_start(update, context)
+    currency, account = session.get("currency"), session.get("account")
+    if currency not in ("UZS", "USD") or account not in ("cash", "card"):
+        return await show_employee(update, context, employee)
+    try:
+        note, amount = parse_income_text(update.message.text, currency)
+    except (ValueError, InvalidOperation):
+        await update.message.reply_text("❌ Summani to'g'ri yozing. Masalan: 500000 yoki dollarda 50.", reply_markup=CANCEL_KEYBOARD)
+        return retry_state
+    try:
+        add_employee_payment(employee[0], currency, amount, account, note, update.effective_user.id)
+    except InsufficientCardFunds:
+        await update.message.reply_text("❌ Kartadagi mablag' yetarli emas.", reply_markup=CANCEL_KEYBOARD)
+        return retry_state
+    except (sqlite3.Error, OSError):
+        await update.message.reply_text("❌ To'lov saqlanmadi. Qayta urinib ko'ring.", reply_markup=CANCEL_KEYBOARD)
+        return retry_state
+    session.clear()
+    session["employee_id"] = employee[0]
+    await update.message.reply_text(f"✅ {employee[1]} xodimga {format_money(amount, currency)} pul berildi.", reply_markup=employee_keyboard(update))
+    await send_transaction_report(update, context, "expense", currency, amount, account=account, note=note,
+                                  employee_name=employee[1], reply_markup=employee_keyboard(update))
+    return EMPLOYEE_MENU
+
+
+async def employee_cancel(update, context):
+    if not await employee_access(update):
+        return ConversationHandler.END
+    session = employee_session(update, context)
+    employee = get_employee(session.get("employee_id"))
+    session.clear()
+    if employee:
+        session["employee_id"] = employee[0]
+        return await show_employee(update, context, employee)
+    return await employees_start(update, context)
 
 
 # =========================================================
@@ -730,6 +993,7 @@ async def send_transaction_report(
     note="",
     client_name=None,
     reply_markup=None,
+    employee_name=None,
 ):
     if kind not in ("income", "expense"):
         return
@@ -739,6 +1003,8 @@ async def send_transaction_report(
     account_label = "💳 Karta" if account == "card" else "💵 Naqd dollar" if currency == "USD" else "💰 Naqd so'm"
     amount_text = format_usd(amount) if currency == "USD" else f"{format_uzs(amount)} so'm"
     lines = [title, "", f"Hisob: {account_label}"]
+    if employee_name is not None:
+        lines.append(f"{employee_name} xodimga {amount_text} pul berildi.")
     if client_name is not None:
         lines.append(f"👤 Mijoz: {client_name}")
     if note:
@@ -1137,13 +1403,15 @@ async def expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🇺🇿 So'm", "🇺🇸 Dollar", CARD_BUTTON, CARD_EXPENSE_BUTTON,
         STATISTICS_BUTTON, BACK_BUTTON, RESET_CONFIRM_TEXT, *STATISTICS_PERIODS,
         CLIENTS_BUTTON, ADD_CLIENT_BUTTON, CLIENT_INCOME_BUTTON, CLIENT_CASH_BUTTON,
-        CLIENT_SPLIT_BUTTON,
+        CLIENT_SPLIT_BUTTON, EMPLOYEES_BUTTON, ADD_EMPLOYEE_BUTTON, EMPLOYEE_PAY_BUTTON,
+        EMPLOYEE_REPORT_BUTTON, EMPLOYEE_PREV, EMPLOYEE_NEXT,
         CLIENT_CARD_BUTTON, CLIENT_REPORT_BUTTON, OTHER_BUTTON, OTHER_CASH_BUTTON,
         OTHER_CARD_BUTTON, OTHER_REPORT_BUTTON, PREV_CLIENTS_BUTTON, NEXT_CLIENTS_BUTTON,
     }:
         return
-    if update.message.text.startswith("👤 #"):
-        await update.message.reply_text("Avval «Mijozlar» tugmasini bosib mijozni tanlang.", reply_markup=MAIN_KEYBOARD)
+    if update.message.text.startswith(("👤 #", "👷 #")):
+        section = "Xodimlar" if update.message.text.startswith("👷 #") else "Mijozlar"
+        await update.message.reply_text(f"Avval «{section}» tugmasini bosib ro'yxatdan tanlang.", reply_markup=MAIN_KEYBOARD)
         return
     return await record_expense(update, context, account="cash")
 
@@ -1159,6 +1427,8 @@ async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, acc
     retry_state = CARD_EXPENSE if account == "card" else success_state
     keyboard = scope_keyboard(context)
     retry_keyboard = CANCEL_KEYBOARD if account == "card" else keyboard
+    if update.message.text.startswith("👷 #"):
+        return await employees_start(update, context)
     if update.message.text.startswith("👤 #"):
         return await clients_start(update, context)
     try:
@@ -1421,7 +1691,8 @@ async def reset_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⚠️ Kassani nolga tushirish\n\n"
         "Naqd so'm, dollar va karta qoldiqlari 0 bo'ladi. "
         "Barcha kirim, xarajat va dollar maydalash tarixi tozalanadi.\n\n"
-        "Mijozlarning kirim va xarajatlari ham tozalanadi, mijoz nomlari saqlanadi.\n\n"
+        "Mijozlarning kirim va xarajatlari ham tozalanadi, mijoz nomlari saqlanadi.\n"
+        "Xodimlarga berilgan pullar tarixi ham tozalanadi, xodim nomlari saqlanadi.\n\n"
         "Tozalashdan oldin zaxira nusxasi saqlanadi.\n\n"
         "Tasdiqlaysizmi?",
         reply_markup=RESET_KEYBOARD
@@ -1521,6 +1792,8 @@ def main():
             CommandHandler(["statistika", "stats"], statistics_start),
             CommandHandler("kartadan", card_expense_start),
             CommandHandler("reset", reset_start),
+            CommandHandler("xodimlar", employees_start),
+            MessageHandler(filters.Regex(f"^{re.escape(EMPLOYEES_BUTTON)}$"), employees_start),
             CommandHandler("mijozlar", clients_start),
             CommandHandler("boshqa", other_start),
             MessageHandler(filters.Regex(f"^{re.escape(CLIENTS_BUTTON)}$"), clients_start),
@@ -1540,6 +1813,12 @@ def main():
         ],
 
         states={
+            **{state: [CommandHandler("cancel", employee_cancel),
+                       MessageHandler(filters.Regex("^⬅️ Bekor qilish$"), employee_cancel),
+                       MessageHandler(filters.TEXT & ~filters.COMMAND, callback)]
+               for state, callback in ((EMPLOYEE_LIST, employee_select), (EMPLOYEE_NAME, employee_create),
+                                       (EMPLOYEE_MENU, employee_menu), (EMPLOYEE_CURRENCY, employee_currency),
+                                       (EMPLOYEE_AMOUNT, employee_amount))},
 
             CLIENT_LIST: [
                 MessageHandler(filters.Regex("^⬅️ Bekor qilish$"), cancel),

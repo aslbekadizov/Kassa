@@ -61,6 +61,30 @@ Kimdan olingani tasdiqlash xabarida, tarixda va hisobot oluvchiga yuboriladigan
 kirim xabarida ko'rinadi. Valyuta tanlangan tugma bilan belgilanadi.
 Faqat summani yozish ham avvalgidek ishlaydi. Karta kirimida summani yozasiz.
 
+## Xodimlar
+
+`👷 Xodimlar` yoki `/xodimlar` orqali ro'yxatni oching. Kassir `➕ Xodim qo'shish`
+tugmasini bosib ismni kiritadi. Eski yozuvlar xodimlarga avtomatik biriktirilmaydi.
+
+Xodimni tanlang → `💸 Pul berish` → so'm, dollar yoki karta → summani yozing.
+Xodim oynasiga to'g'ridan-to'g'ri `100000` yozish naqd so'm, `50$` yozish dollar
+to'lovini qayd etadi. Kartadan berilganda avval tegishli hisobni tanlang.
+Har bir to'lov umumiy kassadan bir marta ayiriladi va o'sha xodimga jamlanadi.
+Kartadagi mablag' yetarli bo'lmasa to'lov yozilmaydi.
+
+Boshliqqa, masalan, `Ali xodimga 100 000 so'm pul berildi.` degan xabar, hisob turi
+va vaqt yuboriladi. `📒 Xodim hisobi` barcha to'lovlarni, naqd so'm, kartadan,
+jami so'm va dollar summalarini ko'rsatadi. Valyutalar bir-biriga aylantirilmaydi.
+
+`REPORT_CHAT_ID` dagi boshliq `/start` bosib `👷 Xodimlar` tugmasidan shu
+hisobotlarni o'zi ko'ra oladi. U xodim qo'sha olmaydi va to'lov yoza olmaydi;
+umumiy kassa, mijozlar va boshqa xarajatlar hisobotlariga kirish huquqi berilmaydi.
+Xodimlarni boshqarish va pul yozish faqat kassirda qoladi.
+
+`/cancel` kiritilayotgan to'lovni bekor qiladi. `/reset` tasdiqlansa xodimlarga
+berilgan pullar tarixi ham tozalanadi, xodim nomlari qoladi. Avval olinadigan
+baza zaxirasi xodimlar va ularning to'lovlarini ham saqlaydi.
+
 ## Mijozlar hisobi
 
 Mijozlar ro'yxati bo'sh boshlanadi. Eski kirim va xarajatlar, hatto izohida mijoz
@@ -102,7 +126,8 @@ Mijozlar va ularning yozuvlari bazada saqlanadi; bot qayta ishga tushganda mijoz
 Kartadan to'lov uchun `💳 Boshqa xarajat kartadan` tugmasini bosing.
 Bu yozuvlar hech bir mijozga biriktirilmaydi, umumiy kassadan ayiriladi.
 `📒 Boshqa xarajatlar hisobi` mijozga biriktirilmagan barcha xarajatlarni va jami
-sarflangan so'm hamda dollarni ko'rsatadi. Eski mijozsiz xarajatlar ham shu ro'yxatda qoladi.
+sarflangan so'm hamda dollarni ko'rsatadi. Xodimga biriktirilgan to'lovlar bu ro'yxatga
+kirmaydi. Eski mijozsiz xarajatlar ham shu ro'yxatda qoladi.
 Asosiy menyuda avvalgidek to'g'ridan-to'g'ri yozilgan xarajatlar ham mijozsiz saqlanadi.
 
 ## Dollar xarajatlari
@@ -132,7 +157,8 @@ Xabarda hisob turi (naqd so'm, dollar yoki karta), summa, vaqt, kirimda kimdan o
 (kiritilgan bo'lsa) va xarajatda izohi ko'rsatiladi.
 Mijoz oynasidan yozilgan kirim va xarajat xabarida mijozning nomi ham chiqadi.
 Qoldiqlar, statistika, tarix, dollar maydalash va reset haqidagi xabarlar unga yuborilmaydi.
-Kassa amallari va to'liq hisobotlar faqat `CASHIER_ID` dagi kassir uchun ochiq.
+Kassa amallari va umumiy hisobotlar faqat `CASHIER_ID` dagi kassir uchun ochiq.
+Boshliq xodimlar bo'yicha to'lov hisobotlarini ham ko'ra oladi.
 
 Qabul qiluvchini almashtirish uchun serverdagi `.env` faylida `REPORT_CHAT_ID` ni yangilab,
 botni qayta ishga tushiring. Yangi qabul qiluvchi botga `/start` yuborgan bo'lishi kerak.
@@ -177,7 +203,7 @@ Avval olinadigan baza zaxirasi mijozlarni ham, barcha operatsiyalarni ham saqlay
 ## Tekshirish
 
 ```sh
-.venv/bin/python -m unittest -v test_kassa.py test_clients.py
+.venv/bin/python -m unittest -v test_kassa.py test_clients.py test_employees.py
 ```
 
 Testlar vaqtinchalik bazadan foydalanadi; Telegramga haqiqiy xabar yubormaydi.
