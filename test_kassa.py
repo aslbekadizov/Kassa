@@ -303,7 +303,7 @@ class NamedIncomeTests(BotTestCase):
                 await self.send(text)
                 self.assertEqual(self.rows(self.db_path), before, text)
                 self.assertIn("❌", self.request.messages[-1], text)
-                self.assertIn(valid_text, self.request.messages[-1], text)
+                self.assertNotIn("Masalan", self.request.messages[-1], text)
             self.assertEqual(sum(m["chat_id"] == kassa.REPORT_CHAT_ID for m in self.request.sent), report_count)
             await self.send(valid_text)
             self.assertEqual(len(self.rows(self.db_path)), len(before) + 1)

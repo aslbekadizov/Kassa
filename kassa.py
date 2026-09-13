@@ -570,7 +570,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # shunda bot unga keyinchalik xabar yubora oladi.
 
     if is_boss(update) and not is_cashier(update):
-        await update.message.reply_text("Xodimlar olgan pullarni ko'rish uchun «Xodimlar»ni bosing.", reply_markup=BOSS_KEYBOARD)
+        await update.message.reply_text("Xodimlar hisobi.", reply_markup=BOSS_KEYBOARD)
         return ConversationHandler.END
     if not is_cashier(update):
         await update.message.reply_text(
@@ -582,13 +582,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "💼 Kassa bot\n\n"
-        "Kerakli amalni tanlang:\n\n"
-        "/hisob — qoldiq\n"
-        "/tarix — oxirgi operatsiyalar\n"
-        "/statistika — xarajatlar va qoldiqlar\n"
-        "/mijozlar — mijozlar hisobi\n"
-        "/boshqa — boshqa xarajatlar\n"
-        "/reset — qoldiq va tarixni nolga tushirish",
+        "Kerakli amalni tanlang.",
         reply_markup=MAIN_KEYBOARD
     )
     return ConversationHandler.END
@@ -662,7 +656,7 @@ async def employee_select(update, context):
     if text == ADD_EMPLOYEE_BUTTON:
         if await reject_if_not_cashier(update):
             return EMPLOYEE_LIST
-        await update.message.reply_text("Xodimning ismini yozing (80 belgigacha):", reply_markup=CANCEL_KEYBOARD)
+        await update.message.reply_text("Xodimning ismini yozing:", reply_markup=CANCEL_KEYBOARD)
         return EMPLOYEE_NAME
     if text in (EMPLOYEE_PREV, EMPLOYEE_NEXT):
         return await show_employees(update, context, max(0, session.get("page", 0) + (1 if text == EMPLOYEE_NEXT else -1)))
@@ -746,7 +740,7 @@ async def employee_currency(update, context):
     session = employee_session(update, context)
     session["currency"], session["account"] = choice
     unit = "dollar" if choice[0] == "USD" else "so'm"
-    await update.message.reply_text(f"Necha {unit} berdingiz? Summani yozing.", reply_markup=CANCEL_KEYBOARD)
+    await update.message.reply_text(f"Necha {unit} berdingiz?", reply_markup=CANCEL_KEYBOARD)
     return EMPLOYEE_AMOUNT
 
 
@@ -763,7 +757,7 @@ async def employee_amount(update, context, retry_state=EMPLOYEE_AMOUNT):
     try:
         note, amount = parse_income_text(update.message.text, currency)
     except (ValueError, InvalidOperation):
-        await update.message.reply_text("❌ Summani to'g'ri yozing. Masalan: 500000 yoki dollarda 50.", reply_markup=CANCEL_KEYBOARD)
+        await update.message.reply_text("❌ Summani to'g'ri yozing.", reply_markup=CANCEL_KEYBOARD)
         return retry_state
     try:
         add_employee_payment(employee[0], currency, amount, account, note, update.effective_user.id)
@@ -847,7 +841,7 @@ async def show_clients(update, context, page=0):
     if navigation:
         keyboard.append(navigation)
     keyboard.extend([[ADD_CLIENT_BUTTON], [BACK_BUTTON]])
-    text = "👥 Mijozni tanlang:" if rows else "Hozircha mijoz yo'q. «Mijoz qo'shish» tugmasini bosing."
+    text = "👥 Mijozni tanlang:" if rows else "Hozircha mijoz yo'q."
     await update.message.reply_text(text, reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
     return CLIENT_LIST
 
@@ -857,7 +851,7 @@ async def clients_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     text = update.message.text
     if text == ADD_CLIENT_BUTTON:
-        await update.message.reply_text("Mijozning ismini yozing (80 belgigacha):", reply_markup=CANCEL_KEYBOARD)
+        await update.message.reply_text("Mijozning ismini yozing:", reply_markup=CANCEL_KEYBOARD)
         return CLIENT_NAME
     page = context.chat_data.get("client_page", 0)
     if text in (PREV_CLIENTS_BUTTON, NEXT_CLIENTS_BUTTON):
@@ -888,8 +882,7 @@ async def client_income_prompt(update, context, client):
     context.chat_data.clear()
     context.chat_data.update(expense_scope="client", client_id=client[0])
     await update.message.reply_text(
-        f"👤 Mijoz: {client[1]}\n\nPulni qaysi hisobga oldingiz?\n"
-        "So'm, dollar, karta yoki dollar + kartani tanlang.",
+        f"👤 Mijoz: {client[1]}\n\nPulni qaysi hisobga oldingiz?",
         reply_markup=CLIENT_CURRENCY_KEYBOARD
     )
     return CHOOSE_CURRENCY
@@ -900,9 +893,7 @@ async def show_client(update, context, client):
     context.chat_data.update(expense_scope="client", client_id=client[0])
     _, totals = get_statement(client[0])
     await update.message.reply_text(
-        f"👤 MIJOZ: {client[1]}\n\n{client_totals_text(totals)}\n\n"
-        "Kirim uchun «Mijozdan pul oldim»ni bosing.\n"
-        "Xarajatni shu yerga yozing: Furnituraga 300$ yoki benzin 150000.",
+        f"👤 MIJOZ: {client[1]}\n\n{client_totals_text(totals)}",
         reply_markup=CLIENT_KEYBOARD
     )
     return CLIENT_MENU
@@ -930,8 +921,7 @@ async def other_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.chat_data.clear()
     context.chat_data["expense_scope"] = "other"
     await update.message.reply_text(
-        "🧾 BOSHQA XARAJATLAR\n\nXarajatni shu yerga yozing:\n"
-        "benzin 150000 yoki ijara 100$.\nKartadan to'lov uchun tegishli tugmani bosing.",
+        "🧾 BOSHQA XARAJATLAR\n\nXarajat nomi va summani yozing.",
         reply_markup=OTHER_KEYBOARD
     )
     return OTHER_MENU
@@ -951,11 +941,9 @@ async def other_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def scoped_expense_prompt(update, context, card=False):
     client = active_client(context)
     title = f"👤 Mijoz: {client[1]}" if client else "🧾 Boshqa xarajatlar"
-    example = "Ali 200000" if card else "benzin 150000 yoki Furnituraga 300$"
     source = "kartadan" if card else "naqd"
     await update.message.reply_text(
-        f"{title}\n\n{source.capitalize()} xarajat: nima uchun va qancha ishlatdingiz?\n"
-        f"Masalan: {example}", reply_markup=CANCEL_KEYBOARD if card else scope_keyboard(context)
+        f"{title}\n\n{source.capitalize()} xarajat: nima uchun va qancha ishlatdingiz?", reply_markup=CANCEL_KEYBOARD if card else scope_keyboard(context)
     )
     return CARD_EXPENSE if card else CLIENT_MENU if client else OTHER_MENU
 
@@ -1015,8 +1003,7 @@ async def send_transaction_report(
     except TelegramError as exc:
         operation = "Kirim" if kind == "income" else "Xarajat"
         await update.message.reply_text(
-            f"⚠️ {operation} saqlandi, lekin hisobot boshqa odamga yuborilmadi.\n\n"
-            "U odam botga /start bosganini va REPORT_CHAT_ID to'g'riligini tekshiring.",
+            f"⚠️ {operation} saqlandi, lekin hisobot boshqa odamga yuborilmadi.",
             reply_markup=reply_markup or MAIN_KEYBOARD
         )
         print("Hisobotni yuborishda xato:", type(exc).__name__)
@@ -1056,7 +1043,7 @@ async def choose_currency(
         if client is None:
             return await currency_invalid(update, context)
         await update.message.reply_text(
-            f"👤 Mijoz: {client[1]}\n\nAvval necha dollar oldingiz?\nMasalan: 300",
+            f"👤 Mijoz: {client[1]}\n\nAvval necha dollar oldingiz?",
             reply_markup=CANCEL_KEYBOARD
         )
         return CLIENT_SPLIT_USD
@@ -1066,10 +1053,9 @@ async def choose_currency(
         context.chat_data["income_currency"] = currency
         context.chat_data["income_account"] = account
         unit = "dollar" if currency == "USD" else "so'm"
-        example = "300" if currency == "USD" else "500000"
         question = "Kartaga necha so'm oldingiz?" if account == "card" else f"Necha {unit} oldingiz?"
         await update.message.reply_text(
-            f"👤 Mijoz: {client[1]}\n\n{question}\nMasalan: {example}",
+            f"👤 Mijoz: {client[1]}\n\n{question}",
             reply_markup=CANCEL_KEYBOARD
         )
         return INCOME_AMOUNT
@@ -1079,9 +1065,7 @@ async def choose_currency(
         context.chat_data["income_account"] = "cash"
 
         await update.message.reply_text(
-            "💰 Kimdan va necha so'm oldingiz?\n\n"
-            "Masalan:\n"
-            "Alidan 500000",
+            "💰 Kimdan va necha so'm oldingiz?",
             reply_markup=CANCEL_KEYBOARD
         )
 
@@ -1092,9 +1076,7 @@ async def choose_currency(
         context.chat_data["income_account"] = "cash"
 
         await update.message.reply_text(
-            "💵 Kimdan va necha dollar oldingiz?\n\n"
-            "Masalan:\n"
-            "Alidan 300",
+            "💵 Kimdan va necha dollar oldingiz?",
             reply_markup=CANCEL_KEYBOARD
         )
 
@@ -1104,7 +1086,7 @@ async def choose_currency(
         context.chat_data["income_currency"] = "UZS"
         context.chat_data["income_account"] = "card"
         await update.message.reply_text(
-            "💳 Kartaga necha so'm tushdi?\n\nMasalan: 500000",
+            "💳 Kartaga necha so'm tushdi?",
             reply_markup=CANCEL_KEYBOARD
         )
         return INCOME_AMOUNT
@@ -1125,13 +1107,11 @@ async def income_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             name, amount = parse_income_text(update.message.text, currency)
     except (ValueError, InvalidOperation):
-        example = "Alidan 300" if currency == "USD" else "Alidan 500000"
         guidance = "Kimdan olganingizni va summani to'g'ri yozing."
         if account == "card" or client:
-            example = "300" if currency == "USD" else "500000"
             guidance = "Summani to'g'ri kiriting."
         await update.message.reply_text(
-            f"❌ {guidance}\n\nMasalan: {example}", reply_markup=CANCEL_KEYBOARD
+            f"❌ {guidance}", reply_markup=CANCEL_KEYBOARD
         )
         return INCOME_AMOUNT
 
@@ -1188,14 +1168,13 @@ async def client_split_usd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         usd_cents = parse_usd(update.message.text)
     except (ValueError, InvalidOperation):
-        await update.message.reply_text("❌ Dollar miqdorini to'g'ri kiriting. Masalan: 300 yoki 12.50.",
+        await update.message.reply_text("❌ Dollar miqdorini to'g'ri kiriting.",
                                         reply_markup=CANCEL_KEYBOARD)
         return CLIENT_SPLIT_USD
     context.chat_data["split_usd_cents"] = usd_cents
     await update.message.reply_text(
         f"👤 Mijoz: {client[1]}\nDollar: {format_usd(usd_cents)}\n\n"
-        "Endi kartaga necha so'm oldingiz?\nMasalan: 500000\n\n"
-        "Karta summasini kiritsangiz, ikkala kirim birga saqlanadi.",
+        "Endi kartaga necha so'm oldingiz?",
         reply_markup=CANCEL_KEYBOARD
     )
     return CLIENT_SPLIT_CARD
@@ -1213,7 +1192,7 @@ async def client_split_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         card_amount = parse_uzs(update.message.text)
     except (ValueError, InvalidOperation):
-        await update.message.reply_text("❌ Kartaga tushgan so'mni to'g'ri kiriting. Masalan: 500000.",
+        await update.message.reply_text("❌ Kartaga tushgan so'mni to'g'ri kiriting.",
                                         reply_markup=CANCEL_KEYBOARD)
         return CLIENT_SPLIT_CARD
     try:
@@ -1256,8 +1235,7 @@ async def exchange_start(
     await update.message.reply_text(
         "💵 Necha dollar maydalayapsiz?\n\n"
         f"Hozirgi dollar qoldiq: "
-        f"{format_usd(usd_balance)}\n\n"
-        "Masalan: 100",
+        f"{format_usd(usd_balance)}",
         reply_markup=CANCEL_KEYBOARD
     )
 
@@ -1287,9 +1265,7 @@ async def exchange_usd(
         await update.message.reply_text(
             f"💵 Maydalanmoqda: "
             f"{format_usd(amount)}\n\n"
-            "🇺🇿 Necha so'm oldingiz?\n\n"
-            "Masalan:\n"
-            "1230000"
+            "🇺🇿 Necha so'm oldingiz?"
         )
 
         return EXCHANGE_UZS
@@ -1297,8 +1273,7 @@ async def exchange_usd(
     except (ValueError, InvalidOperation):
 
         await update.message.reply_text(
-            "❌ Dollar miqdorini to'g'ri kiriting.\n"
-            "Masalan: 100"
+            "❌ Dollar miqdorini to'g'ri kiriting."
         )
 
         return EXCHANGE_USD
@@ -1346,8 +1321,7 @@ async def exchange_uzs(
     except (ValueError, InvalidOperation):
 
         await update.message.reply_text(
-            "❌ So'm miqdorini to'g'ri kiriting.\n\n"
-            "Masalan: 1230000"
+            "❌ So'm miqdorini to'g'ri kiriting."
         )
 
         return EXCHANGE_UZS
@@ -1379,9 +1353,7 @@ async def card_expense_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(
         "💳 Kartadan xarajat\n\n"
         f"Karta qoldiq: {format_uzs(get_balance('UZS', 'card'))} so'm\n\n"
-        "O'tkazmani amalga oshirgach, kimga yoki nima uchun "
-        "va qancha yuborganingizni yozing.\n\n"
-        "Masalan: Ali 200000",
+        "Xarajat nomi va summani yozing.",
         reply_markup=CANCEL_KEYBOARD
     )
     return CARD_EXPENSE
@@ -1431,19 +1403,14 @@ async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, acc
         name, amount, currency = parse_expense_text(update.message.text)
     except (ValueError, InvalidOperation):
         await update.message.reply_text(
-            "❌ Kimga yoki nima uchun va summani yozing:\n\n"
-            "Ali 200000\nbenzin 150000\nFurnituraga 300$\n\n"
-            "Dollarda kasrdan keyin ko'pi bilan 2 ta raqam yozing.\n"
-            "Izoh 200 belgidan oshmasin.",
+            "❌ Xarajat nomi va summani to'g'ri yozing.",
             reply_markup=retry_keyboard
         )
         return retry_state
 
     if account == "card" and currency == "USD":
         await update.message.reply_text(
-            "💳 Karta hisobi so'mda yuritiladi.\n\n"
-            "Dollar xarajati uchun /cancel yuboring, keyin "
-            "Furnituraga 300$ deb yozing.",
+            "💳 Karta hisobi so'mda yuritiladi.",
             reply_markup=CANCEL_KEYBOARD
         )
         return CARD_EXPENSE
@@ -1457,8 +1424,7 @@ async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, acc
     except InsufficientCardFunds as exc:
         await update.message.reply_text(
             "❌ Kartadagi mablag' yetarli emas.\n"
-            f"Karta qoldiq: {format_uzs(exc.balance)} so'm\n\n"
-            "Summani tekshiring yoki amalni bekor qiling.",
+            f"Karta qoldiq: {format_uzs(exc.balance)} so'm",
             reply_markup=CANCEL_KEYBOARD
         )
         return CARD_EXPENSE
