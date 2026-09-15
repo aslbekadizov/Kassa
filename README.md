@@ -211,3 +211,9 @@ Avval olinadigan baza zaxirasi mijozlarni ham, barcha operatsiyalarni ham saqlay
 ```
 
 Testlar vaqtinchalik bazadan foydalanadi; Telegramga haqiqiy xabar yubormaydi.
+
+Mijozni ro'yxatdan olib tashlash uchun uning oynasida
+`🗑 Mijozni o'chirish` → `✅ Ha, o'chirish` tugmalarini bosing.
+Buni faqat kassir bajaradi. Mijoz ikkala odamning ro'yxatidan yashiriladi;
+kirim-xarajatlar, statistika va umumiy balans saqlanadi.
+Shu ism bilan mijoz qayta qo'shilsa, oldingi hisobi bilan ro'yxatga qaytadi.

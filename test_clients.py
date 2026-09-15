@@ -322,6 +322,45 @@ class ClientTests(BotTestCase):
         await self.open_client(client)
         self.assertIn("Olingan: 0 so'm", self.request.messages[-1])
 
+    async def test_remove_cancel_confirm_preserves_money_and_history(self):
+        client = await self.create_client("Ali")
+        await self.income("🇺🇿 So'm", "500000")
+        await self.send("Material 100000")
+        before = self.rows(self.db_path)
+        totals = kassa.get_statistics()[1:]
+        await self.send(kassa.DELETE_CLIENT_BUTTON)
+        await self.send("/cancel")
+        self.assertEqual(kassa.get_clients(), [client])
+        await self.send(kassa.DELETE_CLIENT_BUTTON)
+        await self.send("tasodifiy matn")
+        self.assertEqual(kassa.get_clients(), [client])
+        await self.send(kassa.DELETE_CLIENT_CONFIRM)
+        self.assertEqual(kassa.get_clients(), [])
+        self.assertIsNone(kassa.get_client(client[0]))
+        self.assertEqual(self.rows(self.db_path), before)
+        self.assertEqual(kassa.get_statistics()[1:], totals)
+        self.assertEqual(kassa.get_statement(client[0])[1]["UZS"]["income"], 500000)
+        kassa.init_db()
+        self.assertEqual(kassa.get_clients(), [])
+        self.assertEqual(kassa.add_client("Ali"), client)
+        self.assertEqual(kassa.get_clients(), [client])
+        self.assertEqual(self.rows(self.db_path), before)
+
+    async def test_boss_cannot_remove_client_and_stale_selection_is_hidden(self):
+        client = await self.create_client("Ali")
+        boss = kassa.REPORT_CHAT_ID
+        await self.send(kassa.CLIENTS_BUTTON, actor_id=boss)
+        await self.send(client[1], actor_id=boss)
+        self.assertNotIn(kassa.DELETE_CLIENT_BUTTON, str(self.request.sent[-1]["reply_markup"]))
+        for text in (kassa.DELETE_CLIENT_BUTTON, kassa.DELETE_CLIENT_CONFIRM):
+            await self.send(text, actor_id=boss)
+            self.assertIn("faqat kassir", self.request.messages[-1])
+        self.assertEqual(kassa.get_clients(), [client])
+        await self.send(kassa.DELETE_CLIENT_BUTTON)
+        await self.send(kassa.DELETE_CLIENT_CONFIRM)
+        await self.send(kassa.CLIENT_REPORT_BUTTON, actor_id=boss)
+        self.assertIn("Hozircha mijoz yo'q", self.request.messages[-1])
+
 
 class InitialClientIncomeTests(BotTestCase):
     async def start_client(self, name="Ali", chat_id=None):

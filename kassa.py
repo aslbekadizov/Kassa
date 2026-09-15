@@ -46,6 +46,7 @@ CARD_EXPENSE = 5
 STATISTICS_PERIOD = 6
 CLIENT_LIST, CLIENT_NAME, CLIENT_MENU, OTHER_MENU = range(7, 11)
 CLIENT_SPLIT_USD, CLIENT_SPLIT_CARD = range(11, 13)
+CLIENT_DELETE_CONFIRM = 18
 EMPLOYEE_LIST, EMPLOYEE_NAME, EMPLOYEE_MENU, EMPLOYEE_CURRENCY, EMPLOYEE_AMOUNT = range(13, 18)
 EMPLOYEES_BUTTON = "👷 Xodimlar"
 ADD_EMPLOYEE_BUTTON = "➕ Xodim qo'shish"
@@ -61,6 +62,8 @@ STATISTICS_BUTTON = "📊 Statistika"
 BACK_BUTTON = "⬅️ Asosiy menyu"
 CLIENTS_BUTTON = "👥 Mijozlar"
 ADD_CLIENT_BUTTON = "➕ Mijoz qo'shish"
+DELETE_CLIENT_BUTTON = "🗑 Mijozni o'chirish"
+DELETE_CLIENT_CONFIRM = "✅ Ha, o'chirish"
 CLIENT_INCOME_BUTTON = "💰 Mijozdan pul oldim"
 CLIENT_SPLIT_BUTTON = "💵 Dollar + 💳 Karta"
 CLIENT_CASH_BUTTON = "💸 Mijozga naqd xarajat"
@@ -126,7 +129,7 @@ STATISTICS_KEYBOARD = ReplyKeyboardMarkup(
 
 CLIENT_KEYBOARD = ReplyKeyboardMarkup(
     [[CLIENT_INCOME_BUTTON], [CLIENT_CASH_BUTTON, CLIENT_CARD_BUTTON],
-     [CLIENT_REPORT_BUTTON], [CLIENTS_BUTTON, BACK_BUTTON]],
+     [CLIENT_REPORT_BUTTON], [DELETE_CLIENT_BUTTON], [CLIENTS_BUTTON, BACK_BUTTON]],
     resize_keyboard=True
 )
 
@@ -169,6 +172,9 @@ def init_db():
                 client_id INTEGER REFERENCES clients(id)
             )
         """)
+        client_columns = {row[1] for row in conn.execute("PRAGMA table_info(clients)")}
+        if "archived" not in client_columns:
+            conn.execute("ALTER TABLE clients ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
         columns = {row[1] for row in conn.execute("PRAGMA table_info(transactions)")}
         if "account" not in columns:
             # Eski operatsiyalar va qoldiqlar naqd hisobda saqlanadi.
@@ -235,20 +241,26 @@ def add_client(name):
     if not name or len(name) > 80 or not any(char.isalnum() for char in name):
         raise ValueError("Mijoz nomi 1–80 belgidan iborat bo'lsin")
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
-        conn.execute("INSERT INTO clients (name, name_key) VALUES (?, ?) ON CONFLICT(name_key) DO NOTHING",
+        conn.execute("INSERT INTO clients (name, name_key) VALUES (?, ?) ON CONFLICT(name_key) DO UPDATE SET archived = 0",
                      (name, name.casefold()))
         return conn.execute("SELECT id, name FROM clients WHERE name_key = ?", (name.casefold(),)).fetchone()
 
 
 def get_client(client_id):
     with closing(sqlite3.connect(DB_PATH)) as conn:
-        return conn.execute("SELECT id, name FROM clients WHERE id = ?", (client_id,)).fetchone()
+        return conn.execute("SELECT id, name FROM clients WHERE id = ? AND archived = 0", (client_id,)).fetchone()
 
 
 def get_clients(page=0):
     with closing(sqlite3.connect(DB_PATH)) as conn:
-        return conn.execute("SELECT id, name FROM clients ORDER BY name_key, id LIMIT ? OFFSET ?",
+        return conn.execute("SELECT id, name FROM clients WHERE archived = 0 ORDER BY name_key, id LIMIT ? OFFSET ?",
                             (CLIENT_PAGE_SIZE + 1, page * CLIENT_PAGE_SIZE)).fetchall()
+
+
+
+def archive_client(client_id):
+    with closing(sqlite3.connect(DB_PATH)) as conn, conn:
+        conn.execute("UPDATE clients SET archived = 1 WHERE id = ?", (client_id,))
 
 
 def get_statement(client_id=None):
@@ -936,6 +948,14 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await show_statement(update, context, client)
         await reject_if_not_cashier(update)
         return CLIENT_MENU
+    if text == DELETE_CLIENT_BUTTON:
+        await update.message.reply_text(
+            f"{client[1]} ro'yxatdan o'chirilsinmi?\nKirim-xarajatlar va balans saqlanadi.",
+            reply_markup=ReplyKeyboardMarkup(
+                [[DELETE_CLIENT_CONFIRM], ["⬅️ Bekor qilish"]], resize_keyboard=True
+            )
+        )
+        return CLIENT_DELETE_CONFIRM
     if text == CLIENT_INCOME_BUTTON:
         return await client_income_prompt(update, context, client)
     if text == CLIENT_REPORT_BUTTON:
@@ -943,6 +963,24 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text in (CLIENT_CASH_BUTTON, CLIENT_CARD_BUTTON):
         return await scoped_expense_prompt(update, context, text == CLIENT_CARD_BUTTON)
     return await record_expense(update, context, account="cash")
+
+
+async def client_delete_confirm(update, context):
+    if await reject_if_not_cashier(update):
+        return ConversationHandler.END
+    client = active_client(context)
+    if client is None:
+        return await clients_start(update, context)
+    if update.message.text != DELETE_CLIENT_CONFIRM:
+        await update.message.reply_text("Tasdiqlang yoki bekor qiling.")
+        return CLIENT_DELETE_CONFIRM
+    try:
+        archive_client(client[0])
+    except (sqlite3.Error, OSError):
+        await update.message.reply_text("❌ Mijoz o'chirilmadi. Qayta urinib ko'ring.")
+        return CLIENT_DELETE_CONFIRM
+    await update.message.reply_text(f"{client[1]} ro'yxatdan o'chirildi.")
+    return await clients_start(update, context)
 
 
 async def other_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1826,6 +1864,10 @@ def main():
             CLIENT_SPLIT_CARD: [
                 MessageHandler(filters.Regex("^⬅️ Bekor qilish$"), cancel),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, client_split_card),
+            ],
+            CLIENT_DELETE_CONFIRM: [
+                MessageHandler(filters.Regex("^⬅️ Bekor qilish$"), cancel),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, client_delete_confirm),
             ],
             CLIENT_MENU: [
                 MessageHandler(filters.Regex("^⬅️ Bekor qilish$"), cancel),
