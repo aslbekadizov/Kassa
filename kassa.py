@@ -135,7 +135,12 @@ OTHER_KEYBOARD = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-BOSS_KEYBOARD = ReplyKeyboardMarkup([[EMPLOYEES_BUTTON]], resize_keyboard=True)
+BOSS_KEYBOARD = ReplyKeyboardMarkup(
+    [[CLIENTS_BUTTON, EMPLOYEES_BUTTON], [BALANCE_BUTTON, STATISTICS_BUTTON]], resize_keyboard=True
+)
+BOSS_CLIENT_KEYBOARD = ReplyKeyboardMarkup(
+    [[CLIENT_REPORT_BUTTON], [CLIENTS_BUTTON, BACK_BUTTON]], resize_keyboard=True
+)
 
 
 # =========================================================
@@ -570,7 +575,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # shunda bot unga keyinchalik xabar yubora oladi.
 
     if is_boss(update) and not is_cashier(update):
-        await update.message.reply_text("Xodimlar hisobi.", reply_markup=BOSS_KEYBOARD)
+        await update.message.reply_text("Kerakli bo‘limni tanlang.", reply_markup=BOSS_KEYBOARD)
         return ConversationHandler.END
     if not is_cashier(update):
         await update.message.reply_text(
@@ -608,6 +613,19 @@ async def employee_access(update):
         return True
     await update.message.reply_text("⛔ Xodimlar hisobi faqat kassir va boshliq uchun.")
     return False
+
+
+async def report_access(update):
+    if is_cashier(update) or is_boss(update):
+        return True
+    await update.message.reply_text("⛔ Hisobotlar faqat kassir va boshliq uchun.")
+    return False
+
+
+def client_view_session(update, context):
+    if is_cashier(update):
+        return context.chat_data
+    return context.user_data.setdefault("client_views", {}).setdefault(update.effective_chat.id, {})
 
 
 def employee_session(update, context):
@@ -819,7 +837,7 @@ def client_totals_text(totals):
 
 
 async def clients_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await reject_if_not_cashier(update):
+    if not await report_access(update):
         return ConversationHandler.END
     return await show_clients(update, context)
 
@@ -830,8 +848,9 @@ async def show_clients(update, context, page=0):
         page = 0
         rows = get_clients(page)
     choices = {name: client_id for client_id, name in rows[:CLIENT_PAGE_SIZE]}
-    context.chat_data.clear()
-    context.chat_data.update(client_page=page, client_choices=choices)
+    session = client_view_session(update, context)
+    session.clear()
+    session.update(client_page=page, client_choices=choices)
     keyboard = [[label] for label in choices]
     navigation = []
     if page:
@@ -840,23 +859,27 @@ async def show_clients(update, context, page=0):
         navigation.append(NEXT_CLIENTS_BUTTON)
     if navigation:
         keyboard.append(navigation)
-    keyboard.extend([[ADD_CLIENT_BUTTON], [BACK_BUTTON]])
+    if is_cashier(update):
+        keyboard.append([ADD_CLIENT_BUTTON])
+    keyboard.append([BACK_BUTTON])
     text = "👥 Mijozni tanlang:" if rows else "Hozircha mijoz yo'q."
     await update.message.reply_text(text, reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
     return CLIENT_LIST
 
 
 async def clients_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await reject_if_not_cashier(update):
+    if not await report_access(update):
         return ConversationHandler.END
     text = update.message.text
     if text == ADD_CLIENT_BUTTON:
+        if await reject_if_not_cashier(update):
+            return CLIENT_LIST
         await update.message.reply_text("Mijozning ismini yozing:", reply_markup=CANCEL_KEYBOARD)
         return CLIENT_NAME
-    page = context.chat_data.get("client_page", 0)
+    page = client_view_session(update, context).get("client_page", 0)
     if text in (PREV_CLIENTS_BUTTON, NEXT_CLIENTS_BUTTON):
         return await show_clients(update, context, max(0, page + (1 if text == NEXT_CLIENTS_BUTTON else -1)))
-    client_id = context.chat_data.get("client_choices", {}).get(text)
+    client_id = client_view_session(update, context).get("client_choices", {}).get(text)
     client = get_client(client_id) if client_id is not None else None
     if client is None:
         await update.message.reply_text("Mijozni ro'yxatdagi tugmadan tanlang.")
@@ -889,23 +912,30 @@ async def client_income_prompt(update, context, client):
 
 
 async def show_client(update, context, client):
-    context.chat_data.clear()
-    context.chat_data.update(expense_scope="client", client_id=client[0])
+    session = client_view_session(update, context)
+    session.clear()
+    session.update(expense_scope="client", client_id=client[0])
     _, totals = get_statement(client[0])
     await update.message.reply_text(
         f"👤 MIJOZ: {client[1]}\n\n{client_totals_text(totals)}",
-        reply_markup=CLIENT_KEYBOARD
+        reply_markup=CLIENT_KEYBOARD if is_cashier(update) else BOSS_CLIENT_KEYBOARD
     )
     return CLIENT_MENU
 
 
 async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await reject_if_not_cashier(update):
+    if not await report_access(update):
         return ConversationHandler.END
-    client = active_client(context)
+    session = client_view_session(update, context)
+    client = active_client(context) if is_cashier(update) else get_client(session.get("client_id"))
     if client is None:
         return await clients_start(update, context)
     text = update.message.text
+    if not is_cashier(update):
+        if text == CLIENT_REPORT_BUTTON:
+            return await show_statement(update, context, client)
+        await reject_if_not_cashier(update)
+        return CLIENT_MENU
     if text == CLIENT_INCOME_BUTTON:
         return await client_income_prompt(update, context, client)
     if text == CLIENT_REPORT_BUTTON:
@@ -963,7 +993,7 @@ async def show_statement(update, context, client=None):
         f"So'm: {format_money(totals['UZS']['expense'], 'UZS')}\n"
         f"Dollar: {format_money(totals['USD']['expense'], 'USD')}"
     )
-    await reply_report(update, "\n".join(lines), summary, scope_keyboard(context))
+    await reply_report(update, "\n".join(lines), summary, scope_keyboard(context) if is_cashier(update) else BOSS_CLIENT_KEYBOARD)
     return CLIENT_MENU if client else OTHER_MENU
 
 
@@ -1469,10 +1499,11 @@ async def balance(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-    if await reject_if_not_cashier(update):
+    if not await report_access(update):
         return ConversationHandler.END
 
-    context.chat_data.clear()
+    if is_cashier(update):
+        context.chat_data.clear()
     uzs = get_balance("UZS")
     usd = get_balance("USD")
     card = get_balance("UZS", "card")
@@ -1481,7 +1512,7 @@ async def balance(
         f"Karta: {format_uzs(card)} so'm\n"
         f"So'm: {format_uzs(uzs)} so'm\n"
         f"Dollar: {format_usd(usd)}",
-        reply_markup=MAIN_KEYBOARD
+        reply_markup=MAIN_KEYBOARD if is_cashier(update) else BOSS_KEYBOARD
     )
     return ConversationHandler.END
 
@@ -1491,15 +1522,16 @@ async def balance(
 # =========================================================
 
 async def statistics_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await reject_if_not_cashier(update):
+    if not await report_access(update):
         return ConversationHandler.END
-    context.chat_data.clear()
+    if is_cashier(update):
+        context.chat_data.clear()
     await update.message.reply_text("Davrni tanlang:", reply_markup=STATISTICS_KEYBOARD)
     return STATISTICS_PERIOD
 
 
 async def statistics_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await reject_if_not_cashier(update):
+    if not await report_access(update):
         return ConversationHandler.END
     selection = STATISTICS_PERIODS.get(update.message.text)
     if selection is None:
@@ -1701,6 +1733,8 @@ async def cancel(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+    if is_boss(update) and not is_cashier(update):
+        return await start(update, context)
     if await reject_if_not_cashier(update):
         return ConversationHandler.END
     client = active_client(context)

@@ -64,7 +64,7 @@ class EmployeeTests(BotTestCase):
         for text in (kassa.EMPLOYEE_PAY_BUTTON, '100000', '300$', kassa.CARD_BUTTON):
             await self.send(text, actor_id=boss)
             self.assertIn('faqat kassir', self.request.messages[-1])
-        for command in ('/hisob', '/tarix', '/stats', '/mijozlar', '/reset'):
+        for command in ('/tarix', '/reset', '/boshqa'):
             await self.send(command, actor_id=boss)
             self.assertIn('faqat kassir', self.request.messages[-1])
         self.assertEqual(kassa.get_employees(), [employee])
@@ -167,3 +167,56 @@ class EmployeeTests(BotTestCase):
         for i in range(30):
             self.assertEqual(''.join(chunks).count(f'Tolov {i}:'), 1)
         self.assertIn("Jami so'm: 30 000 so'm", chunks[-1])
+
+    async def test_boss_reads_clients_balance_statistics_without_write_access(self):
+        client = kassa.add_client('Vali')
+        kassa.add_transaction('income', 'UZS', 700000, client_id=client[0])
+        kassa.add_transaction('expense', 'USD', -2500, 'Material', client_id=client[0])
+        before = self.rows(self.db_path)
+        boss = kassa.REPORT_CHAT_ID
+        await self.send('/start', actor_id=boss)
+        keyboard = str(self.request.sent[-1]['reply_markup'])
+        for button in (kassa.CLIENTS_BUTTON, kassa.BALANCE_BUTTON, kassa.STATISTICS_BUTTON):
+            self.assertIn(button, keyboard)
+        await self.send(kassa.CLIENTS_BUTTON, actor_id=boss)
+        self.assertNotIn(kassa.ADD_CLIENT_BUTTON, str(self.request.sent[-1]['reply_markup']))
+        await self.send(kassa.ADD_CLIENT_BUTTON, actor_id=boss)
+        self.assertIn('faqat kassir', self.request.messages[-1])
+        await self.send(client[1], actor_id=boss)
+        self.assertIn('700 000', self.request.messages[-1])
+        self.assertNotIn(kassa.CLIENT_INCOME_BUTTON, str(self.request.sent[-1]['reply_markup']))
+        for text in (kassa.CLIENT_INCOME_BUTTON, kassa.CLIENT_CARD_BUTTON, 'Material 100000'):
+            await self.send(text, actor_id=boss)
+            self.assertIn('faqat kassir', self.request.messages[-1])
+        await self.send(kassa.CLIENT_REPORT_BUTTON, actor_id=boss)
+        self.assertIn('Material', self.request.messages[-1])
+        self.assertIn('$25', self.request.messages[-1])
+        await self.send(kassa.BALANCE_BUTTON, actor_id=boss)
+        for label in ('Karta:', "So'm:", 'Dollar:'):
+            self.assertIn(label, self.request.messages[-1])
+        self.assertEqual(self.request.sent[-1]['reply_markup'], kassa.BOSS_KEYBOARD.to_dict())
+        for command in (kassa.STATISTICS_BUTTON, '/stats'):
+            await self.send(command, actor_id=boss)
+            for period in kassa.STATISTICS_PERIODS:
+                await self.send(period, actor_id=boss)
+                self.assertIn('JAMI XARAJAT', self.request.messages[-1])
+                self.assertIn('HOZIRGI QOLDIQ', self.request.messages[-1])
+        await self.send('/cancel', actor_id=boss)
+        self.assertEqual(self.request.sent[-1]['reply_markup'], kassa.BOSS_KEYBOARD.to_dict())
+        self.assertEqual(self.rows(self.db_path), before)
+        for command in ('/hisob', '/stats', '/mijozlar'):
+            await self.send(command, actor_id=999)
+            self.assertIn('⛔', self.request.messages[-1])
+
+    async def test_boss_client_navigation_does_not_change_cashier_shared_chat(self):
+        ali = kassa.add_client('Ali')
+        vali = kassa.add_client('Vali')
+        await self.send(kassa.CLIENTS_BUTTON, chat_id=-500)
+        await self.send(ali[1], chat_id=-500)
+        for button in (kassa.CLIENTS_BUTTON, vali[1], kassa.CLIENT_REPORT_BUTTON,
+                       kassa.BALANCE_BUTTON, kassa.STATISTICS_BUTTON, '📅 Bugun',
+                       kassa.BACK_BUTTON):
+            await self.send(button, actor_id=kassa.REPORT_CHAT_ID, chat_id=-500)
+        await self.send('Material 100000', chat_id=-500)
+        self.assertEqual(kassa.get_statement(ali[0])[1]['UZS']['expense'], 100000)
+        self.assertEqual(kassa.get_statement(vali[0])[1]['UZS']['expense'], 0)

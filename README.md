@@ -78,9 +78,9 @@ Boshliqqa faqat `Aliga 100 000 so'm berildi.` kabi qisqa xabar yuboriladi.
 jami so'm va dollar summalarini ko'rsatadi. Valyutalar bir-biriga aylantirilmaydi.
 
 `REPORT_CHAT_ID` dagi boshliq `/start` bosib `👷 Xodimlar` tugmasidan shu
-hisobotlarni o'zi ko'ra oladi. U xodim qo'sha olmaydi va to'lov yoza olmaydi;
-umumiy kassa, mijozlar va boshqa xarajatlar hisobotlariga kirish huquqi berilmaydi.
-Xodimlarni boshqarish va pul yozish faqat kassirda qoladi.
+hisobotlarni o'zi ko'ra oladi. Uning menyusida Mijozlar, Balans va Statistika ham bor:
+mijozlarning kirim-xarajatlari, umumiy qoldiqlar va tanlangan davr xarajatlarini ko'radi.
+Mijoz va xodim qo'shish, pul yozish va reset faqat kassirda qoladi.
 
 `/cancel` kiritilayotgan to'lovni bekor qiladi. `/reset` tasdiqlansa xodimlarga
 berilgan pullar tarixi ham tozalanadi, xodim nomlari qoladi. Avval olinadigan
@@ -160,8 +160,9 @@ Xabarda hisob turi (naqd so'm, dollar yoki karta), summa, vaqt, kirimda kimdan o
 (kiritilgan bo'lsa) va xarajatda izohi ko'rsatiladi.
 Mijoz oynasidan yozilgan kirim va xarajat xabarida mijozning nomi ham chiqadi.
 Qoldiqlar, statistika, tarix, dollar maydalash va reset haqidagi xabarlar unga yuborilmaydi.
-Kassa amallari va umumiy hisobotlar faqat `CASHIER_ID` dagi kassir uchun ochiq.
-Boshliq xodimlar bo'yicha to'lov hisobotlarini ham ko'ra oladi.
+Kassa amallarini faqat `CASHIER_ID` dagi kassir bajaradi.
+Boshliq xodimlar, mijozlar, balans va statistikani tugmalar yoki
+`/xodimlar`, `/mijozlar`, `/hisob`, `/statistika` orqali ko'ra oladi.
 
 Qabul qiluvchini almashtirish uchun serverdagi `.env` faylida `REPORT_CHAT_ID` ni yangilab,
 botni qayta ishga tushiring. Yangi qabul qiluvchi botga `/start` yuborgan bo'lishi kerak.

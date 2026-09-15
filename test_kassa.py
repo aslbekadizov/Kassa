@@ -762,8 +762,8 @@ class NotificationTests(BotTestCase):
         self.assertEqual(len(self.rows(self.db_path)), len(self.original_rows) + 2)
         self.assertEqual(self.reports(), [])
 
-    async def test_report_recipient_cannot_view_private_accounts_or_make_changes(self):
-        for command in ("/hisob", "/tarix", "/statistika", "/reset", "💰 Pul oldim", "/kartadan"):
+    async def test_report_recipient_cannot_view_history_or_make_changes(self):
+        for command in ("/tarix", "/reset", "💰 Pul oldim", "/kartadan"):
             await self.send(command, actor_id=kassa.REPORT_CHAT_ID)
             self.assertIn("faqat kassir", self.request.messages[-1])
         self.assertEqual(self.rows(self.db_path), self.original_rows)
