@@ -285,11 +285,11 @@ class NamedIncomeTests(BotTestCase):
     async def test_invalid_named_income_preserves_money_and_allows_retry(self):
         cases = [
             ("🇺🇿 So'm", "UZS", "Alidan 500000", 500000, [
-                "Alidan", "Alidan 0", "Alidan -500", "Alidan 300$", "Alidan 300 USD",
-                "Alidan 9223372036854775808", "Alidan besh yuz", "A" * 201 + " 5000",
+                "Alidan 0", "Alidan -500", "Alidan 300$", "Alidan 300 USD",
+                "Alidan 9223372036854775808", "A" * 201 + " 5000",
             ]),
             ("🇺🇸 Dollar", "USD", "Alidan 300", 30000, [
-                "Alidan", "Alidan 0", "Alidan -300", "Alidan 0.001$", "Alidan NaN",
+                "Alidan 0", "Alidan -300", "Alidan 0.001$", "Alidan NaN",
                 "Alidan Infinity", "Alidan 1e3", "Alidan 92233720368547758.08",
                 "Alidan 500000 so'm", "Alidan 500000 UZS", "A" * 201 + " 300",
             ]),
@@ -310,6 +310,28 @@ class NamedIncomeTests(BotTestCase):
             self.assertEqual(kassa.get_history()[0][1:],
                 ("income", currency, amount, "Kimdan: Alidan", "cash")
             )
+
+    async def test_separate_source_and_amount_for_all_accounts(self):
+        for button, currency, amount, account in (
+            ("🇺🇿 So'm", "UZS", "500000", "cash"),
+            ("🇺🇸 Dollar", "USD", "12.50", "cash"),
+            (kassa.CARD_BUTTON, "UZS", "200000", "card"),
+        ):
+            await self.send("💰 Pul oldim")
+            await self.send(button)
+            self.assertIn("Kimdan oldingiz?", self.request.messages[-1])
+            before = self.rows(self.db_path)
+            await self.send("Ali Valiyev")
+            self.assertEqual(self.rows(self.db_path), before)
+            self.assertIn("oldingiz?", self.request.messages[-1])
+            await self.send("noto'g'ri summa")
+            self.assertIn("❌", self.request.messages[-1])
+            self.assertEqual(self.rows(self.db_path), before)
+            await self.send(amount)
+            row = kassa.get_history()[0]
+            self.assertEqual(row[1:3], ("income", currency))
+            self.assertEqual(row[4:6], ("Kimdan: Ali Valiyev", account))
+            self.assertEqual(len(self.rows(self.db_path)), len(before) + 1)
 
     async def test_source_is_not_reused_after_cancel_or_next_income(self):
         await self.send("💰 Pul oldim")

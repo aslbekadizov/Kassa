@@ -1133,7 +1133,7 @@ async def choose_currency(
         context.chat_data["income_account"] = "cash"
 
         await update.message.reply_text(
-            "💰 Kimdan va necha so'm oldingiz?",
+            "Kimdan oldingiz?",
             reply_markup=CANCEL_KEYBOARD
         )
 
@@ -1144,7 +1144,7 @@ async def choose_currency(
         context.chat_data["income_account"] = "cash"
 
         await update.message.reply_text(
-            "💵 Kimdan va necha dollar oldingiz?",
+            "Kimdan oldingiz?",
             reply_markup=CANCEL_KEYBOARD
         )
 
@@ -1154,7 +1154,7 @@ async def choose_currency(
         context.chat_data["income_currency"] = "UZS"
         context.chat_data["income_account"] = "card"
         await update.message.reply_text(
-            "💳 Kartaga necha so'm tushdi?",
+            "Kimdan oldingiz?",
             reply_markup=CANCEL_KEYBOARD
         )
         return INCOME_AMOUNT
@@ -1169,14 +1169,24 @@ async def income_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.chat_data.get("expense_scope") == "client" and client is None:
         return await clients_start(update, context)
     keyboard = CLIENT_KEYBOARD if client else MAIN_KEYBOARD
+    source = context.chat_data.get("income_source")
+    text = " ".join(update.message.text.split())
+    if not client and source is None and text.casefold().split()[-1:] not in (["nan"], ["infinity"]) and 0 < len(text) <= 200 and any(c.isalpha() for c in text) and all(
+        c.isalpha() or c in " '-’ʻ‘." for c in text
+    ):
+        context.chat_data["income_source"] = text
+        unit = "dollar" if currency == "USD" else "so'm"
+        await update.message.reply_text(f"Necha {unit} oldingiz?", reply_markup=CANCEL_KEYBOARD)
+        return INCOME_AMOUNT
     try:
-        if account == "card":
-            name, amount = "", parse_uzs(update.message.text)
+        if source is not None:
+            name = source
+            amount = parse_usd(text) if currency == "USD" else parse_uzs(text)
         else:
-            name, amount = parse_income_text(update.message.text, currency)
+            name, amount = parse_income_text(text, currency)
     except (ValueError, InvalidOperation):
         guidance = "Kimdan olganingizni va summani to'g'ri yozing."
-        if account == "card" or client:
+        if source is not None or account == "card" or client:
             guidance = "Summani to'g'ri kiriting."
         await update.message.reply_text(
             f"❌ {guidance}", reply_markup=CANCEL_KEYBOARD
