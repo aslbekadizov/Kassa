@@ -231,10 +231,7 @@ def add_employee_payment(employee_id, currency, amount, account="cash", note="",
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("BEGIN IMMEDIATE")
-        if account == "card":
-            balance = conn.execute("SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE account = 'card' AND currency = 'UZS'").fetchone()[0]
-            if amount > balance:
-                raise InsufficientCardFunds(balance)
+        require_funds(conn, currency, account, amount)
         cursor = conn.execute("INSERT INTO transactions(created_at, kind, currency, amount, note, actor_id, account) "
                               "VALUES (?, 'expense', ?, ?, ?, ?, ?)",
                               (now_text(), currency, -amount, note, actor_id, account))
@@ -295,6 +292,9 @@ def add_transaction(kind, currency, amount, note="", actor_id=None, account="cas
         conn.execute("PRAGMA foreign_keys = ON")
         if client_id is not None and kind not in ("income", "expense"):
             raise ValueError("Mijoz hisobiga faqat kirim yoki xarajat yoziladi")
+        if amount < 0:
+            conn.execute("BEGIN IMMEDIATE")
+            require_funds(conn, currency, account, -amount)
         conn.execute(
             """
             INSERT INTO transactions
@@ -330,10 +330,24 @@ def add_split_client_income(client_id, usd_cents, card_amount, actor_id=None):
         )
 
 
-class InsufficientCardFunds(Exception):
+class InsufficientFunds(Exception):
     def __init__(self, balance):
         self.balance = balance
-        super().__init__("Kartadagi mablag' yetarli emas")
+        super().__init__("Balansda pul yetarli emas")
+
+
+class InsufficientCardFunds(InsufficientFunds):
+    pass
+
+
+def require_funds(conn, currency, account, amount):
+    balance = conn.execute(
+        "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE currency = ? AND account = ?",
+        (currency, account)
+    ).fetchone()[0]
+    if amount > balance:
+        error = InsufficientCardFunds if account == "card" else InsufficientFunds
+        raise error(balance)
 
 
 def add_card_expense(amount, note, actor_id=None, client_id=None):
@@ -342,12 +356,7 @@ def add_card_expense(amount, note, actor_id=None, client_id=None):
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("BEGIN IMMEDIATE")
-        balance = conn.execute(
-            "SELECT COALESCE(SUM(amount), 0) FROM transactions "
-            "WHERE currency = 'UZS' AND account = 'card'"
-        ).fetchone()[0]
-        if amount > balance:
-            raise InsufficientCardFunds(balance)
+        require_funds(conn, "UZS", "card", amount)
         conn.execute(
             "INSERT INTO transactions "
             "(created_at, kind, currency, amount, note, actor_id, account, client_id) "
@@ -358,6 +367,8 @@ def add_card_expense(amount, note, actor_id=None, client_id=None):
 
 def add_exchange(usd_cents, uzs_amount, actor_id=None):
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        require_funds(conn, "USD", "cash", usd_cents)
         conn.execute(
             """
             INSERT INTO transactions
@@ -796,8 +807,8 @@ async def employee_amount(update, context, retry_state=EMPLOYEE_AMOUNT):
         return retry_state
     try:
         add_employee_payment(employee[0], currency, amount, account, note, update.effective_user.id)
-    except InsufficientCardFunds:
-        await update.message.reply_text("❌ Kartadagi mablag' yetarli emas.", reply_markup=CANCEL_KEYBOARD)
+    except InsufficientFunds:
+        await update.message.reply_text("❌ Balansda pul yetarli emas.", reply_markup=CANCEL_KEYBOARD)
         return retry_state
     except (sqlite3.Error, OSError):
         await update.message.reply_text("❌ To'lov saqlanmadi. Qayta urinib ko'ring.", reply_markup=CANCEL_KEYBOARD)
@@ -1428,6 +1439,10 @@ async def exchange_uzs(
 
         return ConversationHandler.END
 
+    except InsufficientFunds:
+        await update.message.reply_text("❌ Balansda pul yetarli emas.", reply_markup=CANCEL_KEYBOARD)
+        return EXCHANGE_UZS
+
     except (ValueError, InvalidOperation):
 
         await update.message.reply_text(
@@ -1554,10 +1569,9 @@ async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, acc
         else:
             add_transaction("expense", currency, -amount, name, update.effective_user.id,
                             client_id=client[0] if client else None)
-    except InsufficientCardFunds as exc:
+    except InsufficientFunds:
         await update.message.reply_text(
-            "❌ Kartadagi mablag' yetarli emas.\n"
-            f"Karta qoldiq: {format_uzs(exc.balance)} so'm",
+            "❌ Balansda pul yetarli emas.",
             reply_markup=retry_keyboard
         )
         return retry_state

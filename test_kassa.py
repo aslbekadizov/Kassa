@@ -546,6 +546,7 @@ class CardAndStatisticsTests(BotTestCase):
 
     async def test_statistics_send_all_expenses_and_full_long_notes_in_multiple_messages(self):
         kassa.reset_database()
+        kassa.add_transaction("income", "UZS", 56100)
         names = [f"Xarajat {index}: " + "🚗" * 150 for index in range(30)]
         names.insert(8, "Juda uzun izoh: " + "🔧" * 2500)
         names.extend(["Takror xarajat", "Takror xarajat"])
@@ -573,7 +574,7 @@ class CardAndStatisticsTests(BotTestCase):
         self.assertEqual(combined.count("JAMI XARAJAT"), 1)
         self.assertEqual(combined.count("HOZIRGI QOLDIQ"), 1)
         self.assertIn("JAMI XARAJAT\nSo'm: 56 100 so'm\nDollar: $0", chunks[-1])
-        self.assertIn("Naqd so'm: -56 100 so'm", chunks[-1])
+        self.assertIn("Naqd so'm: 0 so'm", chunks[-1])
         for chunk in chunks:
             self.assertLessEqual(len(chunk.encode("utf-16-le")) // 2, 4000)
         self.assertEqual(self.rows(self.db_path), before)
@@ -834,3 +835,74 @@ class MigrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoOverdraftTests(BotTestCase):
+    async def test_cash_dollar_client_and_other_expenses_fail_without_history_or_report(self):
+        before = self.rows(self.db_path)
+        reports = lambda: sum(m["chat_id"] == kassa.REPORT_CHAT_ID for m in self.request.sent)
+        report_count = reports()
+        for text in ("Material 1600001", "Material 100.01$"):
+            await self.send(text)
+            self.assertIn("Balansda pul yetarli emas", self.request.messages[-1])
+            self.assertEqual(self.rows(self.db_path), before)
+        await self.send(kassa.OTHER_BUTTON)
+        await self.send("Material 1600001")
+        self.assertIn("Balansda pul yetarli emas", self.request.messages[-1])
+        client = kassa.add_client("Ali")
+        await self.send(kassa.CLIENTS_BUTTON)
+        await self.send(client[1])
+        await self.send("Material 2000000")
+        for button in ("💵 Naqd so'm", kassa.CARD_BUTTON, "🇺🇸 Dollar"):
+            await self.send(button)
+            self.assertIn("Balansda pul yetarli emas", self.request.messages[-1])
+            self.assertEqual(self.rows(self.db_path), before)
+        self.assertEqual(reports(), report_count)
+        await self.send("/cancel")
+        await self.send("Material 1600000")
+        await self.send("💵 Naqd so'm")
+        self.assertEqual(kassa.get_balance("UZS"), 0)
+        self.assertEqual(len(self.rows(self.db_path)), len(before) + 1)
+
+    async def test_employee_insufficient_funds_all_accounts_can_retry(self):
+        employee = kassa.add_employee("Ali")
+        for button, amount in (("🇺🇿 So'm", "9999999"), ("🇺🇸 Dollar", "9999999"), (kassa.CARD_BUTTON, "1")):
+            await self.send(kassa.EMPLOYEES_BUTTON)
+            await self.send(employee[1])
+            await self.send(kassa.EMPLOYEE_PAY_BUTTON)
+            await self.send(button)
+            before = self.rows(self.db_path)
+            report_count = sum(m["chat_id"] == kassa.REPORT_CHAT_ID for m in self.request.sent)
+            await self.send(amount)
+            self.assertIn("Balansda pul yetarli emas", self.request.messages[-1])
+            self.assertEqual(self.rows(self.db_path), before)
+            self.assertEqual(kassa.get_employee_payments(employee[0]), [])
+            self.assertEqual(sum(m["chat_id"] == kassa.REPORT_CHAT_ID for m in self.request.sent), report_count)
+
+    async def test_concurrent_employee_and_expense_cannot_spend_same_money(self):
+        employee = kassa.add_employee("Ali")
+        for currency, account in (("UZS", "cash"), ("USD", "cash"), ("UZS", "card")):
+            kassa.reset_database()
+            kassa.add_transaction("income", currency, 100, account=account)
+            def spend(employee_payment):
+                try:
+                    if employee_payment:
+                        kassa.add_employee_payment(employee[0], currency, 80, account)
+                    else:
+                        kassa.add_transaction("expense", currency, -80, account=account)
+                    return True
+                except kassa.InsufficientFunds:
+                    return False
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(spend, (False, True)))
+            self.assertEqual(sorted(results), [False, True])
+            self.assertEqual(kassa.get_balance(currency, account), 20)
+
+    async def test_exchange_rechecks_funds_before_saving(self):
+        await self.send("💵 $ maydalash")
+        await self.send("100")
+        kassa.add_transaction("expense", "USD", -10000, "Oldingi to'lov")
+        before = self.rows(self.db_path)
+        await self.send("1200000")
+        self.assertIn("Balansda pul yetarli emas", self.request.messages[-1])
+        self.assertEqual(self.rows(self.db_path), before)

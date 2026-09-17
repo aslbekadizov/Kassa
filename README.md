@@ -71,7 +71,7 @@ Mijozlar va xodimlar ro'yxatidagi tanlash tugmalarida faqat ism ko'rinadi.
 Xodim oynasiga to'g'ridan-to'g'ri `100000` yozish naqd so'm, `50$` yozish dollar
 to'lovini qayd etadi. Kartadan berilganda avval tegishli hisobni tanlang.
 Har bir to'lov umumiy kassadan bir marta ayiriladi va o'sha xodimga jamlanadi.
-Kartadagi mablag' yetarli bo'lmasa to'lov yozilmaydi.
+Tanlangan hisobda pul yetarli bo'lmasa to'lov yozilmaydi.
 
 Boshliqqa faqat `Aliga 100 000 so'm berildi.` kabi qisqa xabar yuboriladi.
 `📒 Xodim hisobi` barcha to'lovlarni, naqd so'm, kartadan,
@@ -114,7 +114,7 @@ Mijozdan hali pul olinmagan bo'lsa ham unga xarajat yoziladi. Mijoz uchun alohid
 qoldiq yoki minus hisoblanmaydi; faqat undan olingan va unga ishlatilgan pul ko'rsatiladi.
 Dollar avtomatik ravishda so'mga aylantirilmaydi.
 Har bir operatsiya umumiy naqd, dollar yoki karta qoldig'iga ham bir marta ta'sir qiladi.
-Karta xarajati uchun umumiy kartadagi pul yetarli bo'lishi kerak.
+Har qanday xarajat uchun tanlangan umumiy hisobda (naqd so'm, dollar yoki karta) yetarli pul bo'lishi kerak. Balans yetmasa xarajat saqlanmaydi va hisobot yuborilmaydi.
 
 Yozuv saqlangach mijoz oynasi ochiq qoladi. `/cancel` joriy kiritishni bekor qilib,
 shu mijozga qaytaradi. Boshqa mijozga o'tish uchun `👥 Mijozlar`ni, umumiy hisobga
