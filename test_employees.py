@@ -218,5 +218,6 @@ class EmployeeTests(BotTestCase):
                        kassa.BACK_BUTTON):
             await self.send(button, actor_id=kassa.REPORT_CHAT_ID, chat_id=-500)
         await self.send('Material 100000', chat_id=-500)
+        await self.send("💵 Naqd so'm", chat_id=-500)
         self.assertEqual(kassa.get_statement(ali[0])[1]['UZS']['expense'], 100000)
         self.assertEqual(kassa.get_statement(vali[0])[1]['UZS']['expense'], 0)

@@ -47,6 +47,7 @@ STATISTICS_PERIOD = 6
 CLIENT_LIST, CLIENT_NAME, CLIENT_MENU, OTHER_MENU = range(7, 11)
 CLIENT_SPLIT_USD, CLIENT_SPLIT_CARD = range(11, 13)
 CLIENT_DELETE_CONFIRM = 18
+CLIENT_EXPENSE_ACCOUNT = 19
 EMPLOYEE_LIST, EMPLOYEE_NAME, EMPLOYEE_MENU, EMPLOYEE_CURRENCY, EMPLOYEE_AMOUNT = range(13, 18)
 EMPLOYEES_BUTTON = "👷 Xodimlar"
 ADD_EMPLOYEE_BUTTON = "➕ Xodim qo'shish"
@@ -66,7 +67,7 @@ DELETE_CLIENT_BUTTON = "🗑 Mijozni o'chirish"
 DELETE_CLIENT_CONFIRM = "✅ Ha, o'chirish"
 CLIENT_INCOME_BUTTON = "💰 Mijozdan pul oldim"
 CLIENT_SPLIT_BUTTON = "💵 Dollar + 💳 Karta"
-CLIENT_CASH_BUTTON = "💸 Mijozga naqd xarajat"
+CLIENT_CASH_BUTTON = "💸 Xarajat yozish"
 CLIENT_CARD_BUTTON = "💳 Mijoz uchun kartadan"
 CLIENT_REPORT_BUTTON = "📒 Mijoz hisobi"
 OTHER_BUTTON = "🧾 Boshqa xarajatlar"
@@ -128,7 +129,7 @@ STATISTICS_KEYBOARD = ReplyKeyboardMarkup(
 )
 
 CLIENT_KEYBOARD = ReplyKeyboardMarkup(
-    [[CLIENT_INCOME_BUTTON], [CLIENT_CASH_BUTTON, CLIENT_CARD_BUTTON],
+    [[CLIENT_INCOME_BUTTON], [CLIENT_CASH_BUTTON],
      [CLIENT_REPORT_BUTTON], [DELETE_CLIENT_BUTTON], [CLIENTS_BUTTON, BACK_BUTTON]],
     resize_keyboard=True
 )
@@ -136,6 +137,10 @@ CLIENT_KEYBOARD = ReplyKeyboardMarkup(
 OTHER_KEYBOARD = ReplyKeyboardMarkup(
     [[OTHER_CASH_BUTTON, OTHER_CARD_BUTTON], [OTHER_REPORT_BUTTON], [BACK_BUTTON]],
     resize_keyboard=True
+)
+
+CLIENT_EXPENSE_KEYBOARD = ReplyKeyboardMarkup(
+    [["💵 Naqd so'm", CARD_BUTTON, "🇺🇸 Dollar"], ["⬅️ Bekor qilish"]], resize_keyboard=True
 )
 
 BOSS_KEYBOARD = ReplyKeyboardMarkup(
@@ -965,6 +970,32 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await record_expense(update, context, account="cash")
 
 
+async def client_expense_account(update, context):
+    if await reject_if_not_cashier(update):
+        return ConversationHandler.END
+    client = active_client(context)
+    if client is None:
+        return await clients_start(update, context)
+    pending = context.chat_data.get("pending_client_expense")
+    if not pending or pending[0] != client[0]:
+        return await show_client(update, context, client)
+    choices = {"💵 Naqd so'm": ("UZS", "cash"), CARD_BUTTON: ("UZS", "card"),
+               "🇺🇸 Dollar": ("USD", "cash")}
+    choice = choices.get(update.message.text)
+    if choice is None:
+        await update.message.reply_text("Hisobni tanlang.", reply_markup=CLIENT_EXPENSE_KEYBOARD)
+        return CLIENT_EXPENSE_ACCOUNT
+    currency, account = choice
+    try:
+        if currency == "UZS" and re.fullmatch(r"[0-9]+[.,][0-9]{1,2}", pending[2]):
+            raise ValueError
+        amount = parse_usd(pending[2]) if currency == "USD" else parse_uzs(pending[2])
+    except (ValueError, InvalidOperation):
+        await update.message.reply_text("❌ Summa bu hisobga mos emas.", reply_markup=CLIENT_EXPENSE_KEYBOARD)
+        return CLIENT_EXPENSE_ACCOUNT
+    return await record_expense(update, context, account, (pending[1], amount, currency))
+
+
 async def client_delete_confirm(update, context):
     if await reject_if_not_cashier(update):
         return ConversationHandler.END
@@ -1010,8 +1041,9 @@ async def scoped_expense_prompt(update, context, card=False):
     client = active_client(context)
     title = f"👤 Mijoz: {client[1]}" if client else "🧾 Boshqa xarajatlar"
     source = "kartadan" if card else "naqd"
+    prompt = "Xarajat nomi va summani yozing." if client else f"{source.capitalize()} xarajat: nima uchun va qancha ishlatdingiz?"
     await update.message.reply_text(
-        f"{title}\n\n{source.capitalize()} xarajat: nima uchun va qancha ishlatdingiz?", reply_markup=CANCEL_KEYBOARD if card else scope_keyboard(context)
+        f"{title}\n\n{prompt}", reply_markup=CANCEL_KEYBOARD if card else scope_keyboard(context)
     )
     return CARD_EXPENSE if card else CLIENT_MENU if client else OTHER_MENU
 
@@ -1462,7 +1494,7 @@ async def expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await record_expense(update, context, account="cash")
 
 
-async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, account):
+async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, account, selected_expense=None):
     if await reject_if_not_cashier(update):
         return ConversationHandler.END
     scope = context.chat_data.get("expense_scope")
@@ -1477,8 +1509,31 @@ async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, acc
         return await employees_start(update, context)
     if update.message.text.startswith("👤 #"):
         return await clients_start(update, context)
+    if client and selected_expense is None:
+        text = update.message.text.strip()
+        try:
+            # Hisob tanlanguncha summani birlikda saqlaymiz; dollar sentlari keyin hisoblanadi.
+            raw = text[:-1].rstrip() if text.endswith("$") else text
+            name, amount_text = raw.rsplit(maxsplit=1)
+            if not name.strip() or len(name) > 200:
+                raise ValueError
+            try:
+                parse_usd(amount_text)
+            except (ValueError, InvalidOperation):
+                if text.endswith("$"):
+                    raise
+                parse_uzs(amount_text)
+        except (ValueError, InvalidOperation):
+            await update.message.reply_text("❌ Xarajat nomi va summani to'g'ri yozing.", reply_markup=retry_keyboard)
+            return retry_state
+        context.chat_data["pending_client_expense"] = (client[0], name, amount_text)
+        await update.message.reply_text("Qaysi hisobdan?", reply_markup=CLIENT_EXPENSE_KEYBOARD)
+        return CLIENT_EXPENSE_ACCOUNT
+    if selected_expense is not None:
+        retry_state = CLIENT_EXPENSE_ACCOUNT
+        retry_keyboard = CLIENT_EXPENSE_KEYBOARD
     try:
-        name, amount, currency = parse_expense_text(update.message.text)
+        name, amount, currency = selected_expense or parse_expense_text(update.message.text)
     except (ValueError, InvalidOperation):
         await update.message.reply_text(
             "❌ Xarajat nomi va summani to'g'ri yozing.",
@@ -1503,9 +1558,9 @@ async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, acc
         await update.message.reply_text(
             "❌ Kartadagi mablag' yetarli emas.\n"
             f"Karta qoldiq: {format_uzs(exc.balance)} so'm",
-            reply_markup=CANCEL_KEYBOARD
+            reply_markup=retry_keyboard
         )
-        return CARD_EXPENSE
+        return retry_state
     except (sqlite3.Error, OSError) as exc:
         print("Xarajatni saqlashda xato:", exc)
         await update.message.reply_text(
@@ -1514,6 +1569,7 @@ async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, acc
         )
         return retry_state
 
+    context.chat_data.pop("pending_client_expense", None)
     if not scope:
         context.chat_data.clear()
     account_label = "💳 Karta" if account == "card" else "💵 Naqd dollar" if currency == "USD" else "💰 Naqd so'm"
@@ -1874,6 +1930,10 @@ def main():
             CLIENT_SPLIT_CARD: [
                 MessageHandler(filters.Regex("^⬅️ Bekor qilish$"), cancel),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, client_split_card),
+            ],
+            CLIENT_EXPENSE_ACCOUNT: [
+                MessageHandler(filters.Regex("^⬅️ Bekor qilish$"), cancel),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, client_expense_account),
             ],
             CLIENT_DELETE_CONFIRM: [
                 MessageHandler(filters.Regex("^⬅️ Bekor qilish$"), cancel),

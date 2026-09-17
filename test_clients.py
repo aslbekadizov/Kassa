@@ -27,6 +27,52 @@ class ClientTests(BotTestCase):
     def reports(self):
         return [m["text"] for m in self.request.sent if m["chat_id"] == kassa.REPORT_CHAT_ID]
 
+    async def test_expense_waits_for_account_and_debits_selected_account_once(self):
+        client = await self.create_client("Ali")
+        kassa.add_transaction("income", "UZS", 100000, account="card")
+        for button, amount, currency, account, debit in (
+            ("💵 Naqd so'm", "1000", "UZS", "cash", 1000),
+            (kassa.CARD_BUTTON, "2000", "UZS", "card", 2000),
+            ("🇺🇸 Dollar", "12.50", "USD", "cash", 1250),
+        ):
+            before = self.rows(self.db_path)
+            report_count = len(self.reports())
+            balances = {(c, a): kassa.get_balance(c, a)
+                        for c, a in (("UZS", "cash"), ("UZS", "card"), ("USD", "cash"))}
+            await self.send("Material " + amount)
+            self.assertEqual(self.rows(self.db_path), before)
+            self.assertEqual(len(self.reports()), report_count)
+            self.assertEqual(self.request.sent[-1]["reply_markup"], kassa.CLIENT_EXPENSE_KEYBOARD.to_dict())
+            await self.send("noma'lum")
+            self.assertEqual(self.rows(self.db_path), before)
+            await self.send(button)
+            self.assertEqual(len(self.rows(self.db_path)), len(before) + 1)
+            self.assertEqual(len(self.reports()), report_count + 1)
+            for key, balance in balances.items():
+                self.assertEqual(kassa.get_balance(*key), balance - (debit if key == (currency, account) else 0))
+            self.assertEqual(self.rows(self.db_path)[-1][-1], client[0])
+            await self.send(button)
+            self.assertEqual(len(self.rows(self.db_path)), len(before) + 1)
+
+    async def test_pending_expense_cancel_and_failed_save_allow_retry(self):
+        await self.create_client("Ali")
+        before = self.rows(self.db_path)
+        await self.send("Material 1000")
+        await self.send("/cancel")
+        await self.send("💵 Naqd so'm")
+        self.assertEqual(self.rows(self.db_path), before)
+        await self.send("Material 12.50")
+        await self.send(kassa.CARD_BUTTON)
+        self.assertIn("mos emas", self.request.messages[-1])
+        self.assertEqual(self.rows(self.db_path), before)
+        with patch.object(kassa, "add_transaction", side_effect=sqlite3.OperationalError("test")):
+            await self.send("🇺🇸 Dollar")
+        self.assertIn("saqlanmadi", self.request.messages[-1])
+        self.assertEqual(self.rows(self.db_path), before)
+        await self.send("🇺🇸 Dollar")
+        self.assertEqual(len(self.rows(self.db_path)), len(before) + 1)
+        self.assertEqual(kassa.get_history()[0][1:4], ("expense", "USD", -1250))
+
     async def test_clients_start_empty_and_old_named_income_is_never_assigned(self):
         await self.send("💰 Pul oldim")
         await self.send("🇺🇿 So'm")
@@ -54,9 +100,12 @@ class ClientTests(BotTestCase):
         await self.income("🇺🇸 Dollar", "300")
         await self.income(kassa.CARD_BUTTON, "200000")
         await self.send("Material 150000")
+        await self.send("💵 Naqd so'm")
         await self.send("Furnituraga 12.50$")
+        await self.send("🇺🇸 Dollar")
         await self.send(kassa.CLIENT_CARD_BUTTON)
         await self.send("Usta 50000")
+        await self.send(kassa.CARD_BUTTON)
         rows, totals = kassa.get_statement(ali[0])
         self.assertEqual(len(rows), 6)
         self.assertEqual(totals, {
@@ -66,6 +115,7 @@ class ClientTests(BotTestCase):
         vali = await self.create_client("Vali")
         await self.income("🇺🇿 So'm", "100000")
         await self.send("Material 250000")
+        await self.send("💵 Naqd so'm")
         self.assertEqual(kassa.get_statement(vali[0])[1]["UZS"], {"income": 100000, "expense": 250000})
         self.assertEqual(kassa.get_statement(ali[0]), (rows, totals))
         self.assertEqual(kassa.get_balance("UZS"), 1800000)
@@ -87,6 +137,7 @@ class ClientTests(BotTestCase):
         client = await self.create_client("Ali")
         await self.income("🇺🇿 So'm", "500000")
         await self.send("Mijoz materiali 100000")
+        await self.send("💵 Naqd so'm")
         before_client = kassa.get_statement(client[0])
         await self.send(kassa.CLIENT_INCOME_BUTTON)
         await self.send("🇺🇿 So'm")
@@ -118,16 +169,18 @@ class ClientTests(BotTestCase):
         before = self.rows(self.db_path)
         await self.send(kassa.CLIENT_CARD_BUTTON)
         await self.send("Usta 100000")
+        await self.send(kassa.CARD_BUTTON)
         self.assertIn("yetarli emas", self.request.messages[-1])
         self.assertEqual(self.rows(self.db_path), before)
         await self.send("Usta 1$")
         self.assertEqual(self.rows(self.db_path), before)
         kassa.add_transaction("income", "UZS", 100000, account="card")
-        await self.send("Usta 100000")
+        await self.send(kassa.CARD_BUTTON)
         self.assertEqual(kassa.get_balance("UZS", "card"), 0)
         self.assertEqual(kassa.get_statement(client[0])[1]["UZS"], {"income": 0, "expense": 100000})
         self.assertEqual(self.request.sent[-2]["reply_markup"], kassa.CLIENT_KEYBOARD.to_dict())
         await self.send("Mayda xarajat 10000")
+        await self.send("💵 Naqd so'm")
         self.assertEqual(self.rows(self.db_path)[-1][-1], client[0])
 
     async def test_cancel_returns_to_selected_client_without_recording_pending_input(self):
@@ -139,6 +192,7 @@ class ClientTests(BotTestCase):
             self.assertIn("MIJOZ: Ali", self.request.messages[-1])
         await self.send(kassa.CLIENT_CASH_BUTTON)
         await self.send("Mix 5000")
+        await self.send("💵 Naqd so'm")
         self.assertEqual(self.rows(self.db_path)[-1][-1], client[0])
         await self.send("💰 Pul oldim")
         await self.send("🇺🇿 So'm")
@@ -153,7 +207,9 @@ class ClientTests(BotTestCase):
         await self.income("🇺🇿 So'm", "100000")
         await self.income("🇺🇸 Dollar", "20", chat_id=-500)
         await self.send("Mix 20000")
+        await self.send("💵 Naqd so'm")
         await self.send("Furnitura 5$", chat_id=-500)
+        await self.send("🇺🇸 Dollar", chat_id=-500)
         self.assertEqual(kassa.get_statement(ali[0])[1], {
             "UZS": {"income": 100000, "expense": 20000}, "USD": {"income": 0, "expense": 0},
         })
@@ -164,6 +220,7 @@ class ClientTests(BotTestCase):
         await self.send("🇺🇸 Dollar")
         await self.open_client(vali)
         await self.send("Mix 5000")
+        await self.send("💵 Naqd so'm")
         self.assertEqual(kassa.get_statement(vali[0])[0][-1][1:4], ("expense", "UZS", -5000))
 
     async def test_bad_inputs_and_missing_client_do_not_write_or_report(self):
@@ -262,6 +319,7 @@ class ClientTests(BotTestCase):
         client = await self.create_client("Ali")
         await self.income("🇺🇿 So'm", "500000")
         await self.send("Material 150000")
+        await self.send("💵 Naqd so'm")
         await self.send("/tarix")
         self.assertIn("Mijoz: Ali", self.request.messages[-1])
         self.assertIn("Sinov xarajat", self.request.messages[-1])
@@ -279,6 +337,7 @@ class ClientTests(BotTestCase):
         self.assertIn("Kirim saqlandi", self.request.messages[-1])
         self.assertEqual(self.request.sent[-1]["reply_markup"], kassa.CLIENT_KEYBOARD.to_dict())
         await self.send("Material 100000")
+        await self.send("💵 Naqd so'm")
         self.assertIn("Xarajat saqlandi", self.request.messages[-1])
         self.assertEqual(len(kassa.get_statement(client[0])[0]), 2)
         self.assertEqual(kassa.get_balance("UZS"), 2000000)
@@ -310,6 +369,7 @@ class ClientTests(BotTestCase):
         client = await self.create_client("Ali")
         await self.income("🇺🇿 So'm", "500000")
         await self.send("Material 100000")
+        await self.send("💵 Naqd so'm")
         before = self.rows(self.db_path)
         await self.send("/reset")
         self.assertIn("Mijozlarning kirim va xarajatlari ham tozalanadi", self.request.messages[-1])
@@ -326,6 +386,7 @@ class ClientTests(BotTestCase):
         client = await self.create_client("Ali")
         await self.income("🇺🇿 So'm", "500000")
         await self.send("Material 100000")
+        await self.send("💵 Naqd so'm")
         before = self.rows(self.db_path)
         totals = kassa.get_statistics()[1:]
         await self.send(kassa.DELETE_CLIENT_BUTTON)
@@ -420,6 +481,7 @@ class InitialClientIncomeTests(BotTestCase):
         self.assertIn("➕ 500 000 so'm", self.reports()[1])
         self.assertTrue(all("Mijoz: Ali" in m and "qoldiq" not in m.lower() for m in self.reports()))
         await self.send("Material 100000")
+        await self.send("💵 Naqd so'm")
         self.assertEqual(self.rows(self.db_path)[-1][8], client[0])
         self.assertEqual(kassa.get_statement(client[0])[1], {
             "UZS": {"income": 500000, "expense": 100000},

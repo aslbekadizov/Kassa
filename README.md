@@ -95,8 +95,11 @@ ismi bo'lsa ham, mijozlarga avtomatik biriktirilmaydi va o'zgartirilmaydi.
 2. Ismni yozgach bot darhol kirim turini so'raydi: so'm, dollar, karta yoki `💵 Dollar + 💳 Karta`.
 3. Kerakli hisobni tanlang va miqdorni yozing. `Dollar + Karta` bo'lsa, avval dollarni,
    keyin kartaga tushgan so'mni yozasiz. Masalan: `300` dollar, keyin `500000` so'm karta.
-4. Shu oynaga `Material 150000` yoki `Furnituraga 300$` yozsangiz, xarajat tanlangan mijozga yoziladi.
-5. Kartadan xarajat uchun `💳 Mijoz uchun kartadan` tugmasini bosing, keyin `Usta 200000` deb yozing.
+4. Mijoz oynasiga xarajat nomi va summani yozing yoki `💸 Xarajat yozish`ni bosing.
+5. Keyin `💵 Naqd so'm`, `💳 Karta` yoki `🇺🇸 Dollar`ni tanlang.
+   Xarajat faqat hisob tanlangach saqlanadi va shu hisobdan ayriladi.
+   Dollar tanlansa yozilgan summa dollar hisoblanadi; `$` belgisi shart emas.
+   Tanlashdan oldin bekor qilinsa, pul ayrilmaydi.
 6. `📒 Mijoz hisobi` barcha kirim va xarajatlarni, jami olingan va ishlatilgan pulni ko'rsatadi.
 
 `Dollar + Karta` kirimining ikkala qismi karta summasi kiritilgach birga saqlanadi.
