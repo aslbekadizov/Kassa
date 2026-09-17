@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import re
 import sqlite3
@@ -48,6 +49,11 @@ CLIENT_LIST, CLIENT_NAME, CLIENT_MENU, OTHER_MENU = range(7, 11)
 CLIENT_SPLIT_USD, CLIENT_SPLIT_CARD = range(11, 13)
 CLIENT_DELETE_CONFIRM = 18
 CLIENT_EXPENSE_ACCOUNT = 19
+UNDO_LIST, UNDO_CONFIRM, OTHER_USD = range(20, 23)
+UNDO_BUTTON = "↩️ Tranzaksiyani qaytarish"
+UNDO_CONFIRM_BUTTON = "✅ Qaytarish"
+UNDO_PREV = "⬅️ Oldingi yozuvlar"
+UNDO_NEXT = "➡️ Keyingi yozuvlar"
 EMPLOYEE_LIST, EMPLOYEE_NAME, EMPLOYEE_MENU, EMPLOYEE_CURRENCY, EMPLOYEE_AMOUNT = range(13, 18)
 EMPLOYEES_BUTTON = "👷 Xodimlar"
 ADD_EMPLOYEE_BUTTON = "➕ Xodim qo'shish"
@@ -72,6 +78,7 @@ CLIENT_CARD_BUTTON = "💳 Mijoz uchun kartadan"
 CLIENT_REPORT_BUTTON = "📒 Mijoz hisobi"
 OTHER_BUTTON = "🧾 Boshqa xarajatlar"
 OTHER_CASH_BUTTON = "💸 Boshqa naqd xarajat"
+OTHER_USD_BUTTON = "💵 Boshqa dollar xarajat"
 OTHER_CARD_BUTTON = "💳 Boshqa xarajat kartadan"
 OTHER_REPORT_BUTTON = "📒 Boshqa xarajatlar hisobi"
 PREV_CLIENTS_BUTTON = "⬅️ Oldingi mijozlar"
@@ -94,6 +101,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         [CARD_EXPENSE_BUTTON, STATISTICS_BUTTON],
         [CLIENTS_BUTTON, OTHER_BUTTON],
         [EMPLOYEES_BUTTON, BALANCE_BUTTON],
+        [UNDO_BUTTON],
     ],
     resize_keyboard=True
 )
@@ -135,7 +143,7 @@ CLIENT_KEYBOARD = ReplyKeyboardMarkup(
 )
 
 OTHER_KEYBOARD = ReplyKeyboardMarkup(
-    [[OTHER_CASH_BUTTON, OTHER_CARD_BUTTON], [OTHER_REPORT_BUTTON], [BACK_BUTTON]],
+    [[OTHER_CASH_BUTTON, OTHER_CARD_BUTTON], [OTHER_USD_BUTTON], [OTHER_REPORT_BUTTON], [BACK_BUTTON]],
     resize_keyboard=True
 )
 
@@ -195,6 +203,10 @@ def init_db():
             employee_id INTEGER NOT NULL REFERENCES employees(id)
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS payments_employee ON employee_payments(employee_id, transaction_id)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS transaction_undo (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            undone_at TEXT NOT NULL, actor_id INTEGER, original_rows TEXT NOT NULL
+        )""")
 
 
 def add_employee(name):
@@ -400,6 +412,146 @@ def add_exchange(usd_cents, uzs_amount, actor_id=None):
                 actor_id
             )
         )
+
+
+
+def undo_rows(conn, transaction_id):
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM transactions WHERE id = ?", (transaction_id,)).fetchone()
+    if row is None:
+        raise ValueError("Tranzaksiya topilmadi.")
+    if row["kind"] == "exchange_in":
+        transaction_id -= 1
+        row = conn.execute("SELECT * FROM transactions WHERE id = ?", (transaction_id,)).fetchone()
+    if row is None or row["kind"] not in ("income", "expense", "exchange_out"):
+        raise ValueError("Tranzaksiyani qaytarib bo'lmaydi.")
+    rows = [dict(row)]
+    if row["kind"] == "exchange_out":
+        pair = conn.execute("SELECT * FROM transactions WHERE id = ?", (transaction_id + 1,)).fetchone()
+        if (pair is None or pair["kind"] != "exchange_in" or pair["currency"] != "UZS"
+                or row["currency"] != "USD" or pair["account"] != "cash" or row["account"] != "cash"
+                or pair["actor_id"] != row["actor_id"]):
+            raise ValueError("Dollar maydalash jufti topilmadi.")
+        rows.append(dict(pair))
+    for item in rows:
+        employee = conn.execute("SELECT employee_id FROM employee_payments WHERE transaction_id = ?", (item["id"],)).fetchone()
+        item["employee_id"] = employee[0] if employee else None
+        client = conn.execute("SELECT name FROM clients WHERE id = ?", (item["client_id"],)).fetchone()
+        employee = conn.execute("SELECT name FROM employees WHERE id = ?", (item["employee_id"],)).fetchone()
+        item["owner"] = client[0] if client else employee[0] if employee else ""
+    return rows
+
+
+def get_undo_rows(transaction_id):
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        return undo_rows(conn, transaction_id)
+
+
+def reverse_transaction(transaction_id, actor_id):
+    with closing(sqlite3.connect(DB_PATH)) as conn, conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("BEGIN IMMEDIATE")
+        rows = undo_rows(conn, transaction_id)
+        reductions = {}
+        for row in rows:
+            key = (row["currency"], row["account"])
+            reductions[key] = reductions.get(key, 0) + row["amount"]
+        for (currency, account), amount in reductions.items():
+            if amount > 0:
+                require_funds(conn, currency, account, amount)
+        conn.execute("INSERT INTO transaction_undo (undone_at, actor_id, original_rows) VALUES (?, ?, ?)",
+                     (now_text(), actor_id, json.dumps(rows, ensure_ascii=False)))
+        conn.executemany("DELETE FROM transactions WHERE id = ?", [(row["id"],) for row in rows])
+        return rows
+
+
+def undo_description(rows):
+    lines = []
+    for row in rows:
+        kind = {"income": "Kirim", "expense": "Xarajat", "exchange_out": "Dollar maydalash",
+                "exchange_in": "Olingan so'm"}[row["kind"]]
+        account = "Karta" if row["account"] == "card" else "Naqd"
+        lines.append(f"{kind}: {format_money(abs(row['amount']), row['currency'])} ({account})")
+        if row["owner"]:
+            lines.append(row["owner"])
+        if row["note"]:
+            lines.append(row["note"])
+        lines.append(row["created_at"])
+    return "\n".join(lines)
+
+
+async def undo_start(update, context):
+    if await reject_if_not_cashier(update):
+        return ConversationHandler.END
+    context.chat_data.clear()
+    return await show_undo_list(update, context)
+
+
+async def show_undo_list(update, context, page=0):
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        rows = conn.execute(
+            "SELECT id, kind, currency, amount, note FROM transactions "
+            "WHERE kind IN ('income', 'expense', 'exchange_out') ORDER BY id DESC LIMIT 11 OFFSET ?",
+            (page * 10,)
+        ).fetchall()
+    if not rows and page:
+        return await show_undo_list(update, context)
+    choices = {}
+    for tid, kind, currency, amount, note in rows[:10]:
+        sign = "+" if amount > 0 else "−"
+        choices[f"#{tid} {sign}{format_money(abs(amount), currency)} · {(note or kind)[:40]}"] = tid
+    context.chat_data.clear()
+    context.chat_data.update(undo_choices=choices, undo_page=page)
+    keyboard = [[label] for label in choices]
+    navigation = ([UNDO_PREV] if page else []) + ([UNDO_NEXT] if len(rows) > 10 else [])
+    if navigation:
+        keyboard.append(navigation)
+    keyboard.append([BACK_BUTTON])
+    await update.message.reply_text("Tranzaksiyani tanlang:" if rows else "Tranzaksiya yo'q.",
+                                   reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+    return UNDO_LIST
+
+
+async def undo_select(update, context):
+    if await reject_if_not_cashier(update):
+        return ConversationHandler.END
+    text = update.message.text
+    if text in (UNDO_PREV, UNDO_NEXT):
+        return await show_undo_list(update, context, max(0, context.chat_data.get("undo_page", 0) + (1 if text == UNDO_NEXT else -1)))
+    tid = context.chat_data.get("undo_choices", {}).get(text)
+    if tid is None:
+        await update.message.reply_text("Tranzaksiyani ro'yxatdan tanlang.")
+        return UNDO_LIST
+    try:
+        rows = get_undo_rows(tid)
+    except ValueError as exc:
+        await update.message.reply_text(str(exc))
+        return await show_undo_list(update, context)
+    context.chat_data["undo_id"] = tid
+    await reply_report(update, undo_description(rows), "Tranzaksiya qaytarilsinmi?",
+                       ReplyKeyboardMarkup([[UNDO_CONFIRM_BUTTON], ["⬅️ Bekor qilish"]], resize_keyboard=True))
+    return UNDO_CONFIRM
+
+
+async def undo_confirm(update, context):
+    if await reject_if_not_cashier(update):
+        return ConversationHandler.END
+    if update.message.text != UNDO_CONFIRM_BUTTON:
+        await update.message.reply_text("Tasdiqlang yoki bekor qiling.")
+        return UNDO_CONFIRM
+    try:
+        reverse_transaction(context.chat_data.get("undo_id"), update.effective_user.id)
+    except InsufficientFunds:
+        await update.message.reply_text("❌ Balansda pul yetarli emas.")
+        return UNDO_CONFIRM
+    except ValueError as exc:
+        await update.message.reply_text(str(exc))
+        return await show_undo_list(update, context)
+    except (sqlite3.Error, OSError):
+        await update.message.reply_text("❌ Qaytarilmadi. Qayta urinib ko'ring.")
+        return UNDO_CONFIRM
+    await update.message.reply_text("✅ Tranzaksiya qaytarildi.")
+    return await show_undo_list(update, context)
 
 
 def get_balance(currency, account="cash"):
@@ -1043,9 +1195,25 @@ async def other_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text == OTHER_REPORT_BUTTON:
         return await show_statement(update, context)
+    if text == OTHER_USD_BUTTON:
+        await update.message.reply_text("Dollar xarajati nomi va summani yozing.", reply_markup=CANCEL_KEYBOARD)
+        return OTHER_USD
     if text in (OTHER_CASH_BUTTON, OTHER_CARD_BUTTON):
         return await scoped_expense_prompt(update, context, text == OTHER_CARD_BUTTON)
     return await record_expense(update, context, account="cash")
+
+
+async def other_usd_expense(update, context):
+    if await reject_if_not_cashier(update):
+        return ConversationHandler.END
+    text = update.message.text.strip()
+    try:
+        name, amount, currency = parse_expense_text(text if text.endswith("$") else text + "$")
+    except (ValueError, InvalidOperation):
+        await update.message.reply_text("❌ Xarajat nomi va summani to'g'ri yozing.")
+        return OTHER_USD
+    return await record_expense(update, context, "cash", (name, amount, currency), selected_retry=OTHER_USD)
+
 
 
 async def scoped_expense_prompt(update, context, card=False):
@@ -1509,7 +1677,7 @@ async def expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await record_expense(update, context, account="cash")
 
 
-async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, account, selected_expense=None):
+async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, account, selected_expense=None, selected_retry=CLIENT_EXPENSE_ACCOUNT):
     if await reject_if_not_cashier(update):
         return ConversationHandler.END
     scope = context.chat_data.get("expense_scope")
@@ -1545,8 +1713,8 @@ async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, acc
         await update.message.reply_text("Qaysi hisobdan?", reply_markup=CLIENT_EXPENSE_KEYBOARD)
         return CLIENT_EXPENSE_ACCOUNT
     if selected_expense is not None:
-        retry_state = CLIENT_EXPENSE_ACCOUNT
-        retry_keyboard = CLIENT_EXPENSE_KEYBOARD
+        retry_state = selected_retry
+        retry_keyboard = CLIENT_EXPENSE_KEYBOARD if selected_retry == CLIENT_EXPENSE_ACCOUNT else CANCEL_KEYBOARD
     try:
         name, amount, currency = selected_expense or parse_expense_text(update.message.text)
     except (ValueError, InvalidOperation):
@@ -1894,6 +2062,8 @@ def main():
     conversation = ConversationHandler(
 
         entry_points=[
+            CommandHandler("qaytarish", undo_start),
+            MessageHandler(filters.Regex(f"^{re.escape(UNDO_BUTTON)}$"), undo_start),
             CommandHandler("start", start),
             CommandHandler("hisob", balance),
             MessageHandler(filters.Regex(f"^{re.escape(BALANCE_BUTTON)}$"), balance),
@@ -1922,6 +2092,17 @@ def main():
         ],
 
         states={
+            UNDO_LIST: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, undo_select),
+            ],
+            UNDO_CONFIRM: [
+                MessageHandler(filters.Regex("^⬅️ Bekor qilish$"), cancel),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, undo_confirm),
+            ],
+            OTHER_USD: [
+                MessageHandler(filters.Regex("^⬅️ Bekor qilish$"), cancel),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, other_usd_expense),
+            ],
             **{state: [CommandHandler("cancel", employee_cancel),
                        MessageHandler(filters.Regex("^⬅️ Bekor qilish$"), employee_cancel),
                        MessageHandler(filters.TEXT & ~filters.COMMAND, callback)]

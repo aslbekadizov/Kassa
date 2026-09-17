@@ -222,3 +222,18 @@ kirim-xarajatlar, statistika va umumiy balans saqlanadi.
 Shu ism bilan mijoz qayta qo'shilsa, oldingi hisobi bilan ro'yxatga qaytadi.
 
 Umumiy «Pul oldim»da hisob turini tanlab, kimdan olinganini va keyingi xabarda summani yozish mumkin. Ism va summa bitta xabarda ham qabul qilinadi.
+
+## Tranzaksiyani qaytarish
+
+Asosiy menyudagi `↩️ Tranzaksiyani qaytarish` yoki `/qaytarish` orqali
+yozuvni tanlang va `✅ Qaytarish` bilan tasdiqlang. Ro'yxat sahifalanadi.
+Faqat kassir qaytara oladi. Tasdiqlashdan oldin bekor qilish mumkin.
+
+Xarajat qaytarilganda pul tegishli balansga qaytadi; kirim qaytarilganda
+undan ayriladi. Natija mijoz/xodim hisobi, tarix va statistikada ham aks etadi.
+Qaytarish balansni manfiy qilsa, bajarilmaydi. Dollar maydalashning ikkala
+yozuvi birga qaytariladi; dollar+karta kirimining har bir yozuvi alohida tanlanadi.
+Asl yozuvlar va xodimga bog'lanish ma'lumoti `transaction_undo` jadvalida saqlanadi.
+
+`🧾 Boshqa xarajatlar` → `💵 Boshqa dollar xarajat` orqali xarajat nomi
+va dollar miqdorini yozing. Bu rejimda `$` belgisi shart emas.
