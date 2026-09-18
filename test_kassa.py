@@ -404,14 +404,14 @@ class CardAndStatisticsTests(BotTestCase):
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(spend, ["Ali", "Vali"]))
         self.assertEqual(sorted(results), [False, True])
-        self.assertEqual(kassa.get_balance("UZS", "card"), 20000)
+        self.assertEqual(kassa.get_balance("UZS", "card"), 19200)
 
     async def test_card_expense_and_report_use_only_card_then_return_to_cash(self):
         await self.card_income(500000)
         cash_before = kassa.get_balance("UZS")
         await self.send(kassa.CARD_EXPENSE_BUTTON)
         await self.send("Ali 200000")
-        self.assertEqual(kassa.get_balance("UZS", "card"), 300000)
+        self.assertEqual(kassa.get_balance("UZS", "card"), 298000)
         self.assertEqual(kassa.get_balance("UZS"), cash_before)
         self.assertEqual(kassa.get_balance("USD"), 10000)
         report = self.request.sent[-1]
@@ -420,7 +420,7 @@ class CardAndStatisticsTests(BotTestCase):
         self.assertNotIn("qoldiq", report["text"].lower())
         await self.send("benzin 150000")
         self.assertEqual(kassa.get_balance("UZS"), cash_before - 150000)
-        self.assertEqual(kassa.get_balance("UZS", "card"), 300000)
+        self.assertEqual(kassa.get_balance("UZS", "card"), 298000)
         self.assertIn("Hisob: 💰 Naqd so'm", self.request.messages[-1])
 
     async def test_cash_cannot_cover_missing_card_funds(self):
@@ -430,7 +430,7 @@ class CardAndStatisticsTests(BotTestCase):
         self.assertEqual(self.rows(self.db_path), self.original_rows)
 
     async def test_insufficient_card_funds_allow_retry_with_exact_balance(self):
-        await self.card_income(100000)
+        await self.card_income(101000)
         before = self.rows(self.db_path)
         await self.send(kassa.CARD_EXPENSE_BUTTON)
         await self.send("Ali 200000")
@@ -470,7 +470,7 @@ class CardAndStatisticsTests(BotTestCase):
         await self.send(kassa.BACK_BUTTON)
         await self.send(kassa.CARD_EXPENSE_BUTTON)
         await self.send("Ali 200000")
-        self.assertEqual(kassa.get_balance("UZS", "card"), 300000)
+        self.assertEqual(kassa.get_balance("UZS", "card"), 298000)
 
     async def test_balance_history_and_menus_include_card(self):
         await self.card_income(500000)
@@ -502,20 +502,20 @@ class CardAndStatisticsTests(BotTestCase):
         expenses, totals, balances = kassa.get_statistics()
         self.assertEqual([row[1:] for row in expenses], [
             ("Sinov xarajat", "UZS", 100000, "cash"),
-            (" BENZIN ", "UZS", 400000, "card"),
+            (" BENZIN ", "UZS", 404000, "card"),
             ("benzin", "UZS", 150000, "cash"),
             ("Usta", "USD", 5000, "cash"),
         ])
-        self.assertEqual(totals, {"UZS": 650000, "USD": 5000})
+        self.assertEqual(totals, {"UZS": 654000, "USD": 5000})
         self.assertEqual(balances, {
-            ("cash", "UZS"): 1450000, ("card", "UZS"): 600000, ("cash", "USD"): 5000,
+            ("cash", "UZS"): 1450000, ("card", "UZS"): 596000, ("cash", "USD"): 5000,
         })
         before = self.rows(self.db_path)
         await self.send("/statistika")
         await self.send("📋 Barcha vaqt")
         expected_entries = [
             "1. Sinov xarajat — 100 000 so'm (naqd)",
-            "2.  BENZIN  — 400 000 so'm (karta)",
+            "2.  BENZIN  — 404 000 so'm (karta)",
             "3. benzin — 150 000 so'm (naqd)",
             "4. Usta — $50 (naqd)",
         ]
@@ -524,8 +524,8 @@ class CardAndStatisticsTests(BotTestCase):
         )
         self.assertEqual(self.request.messages[-1],
             "📊 STATISTIKA — Barcha vaqt\n\n" + expected_list + "\n\n"
-            "JAMI XARAJAT\nSo'm: 650 000 so'm\nDollar: $50\n\n"
-            "HOZIRGI QOLDIQ\nNaqd so'm: 1 450 000 so'm\nKarta: 600 000 so'm\nDollar: $50"
+            "JAMI XARAJAT\nSo'm: 654 000 so'm\nDollar: $50\n\n"
+            "HOZIRGI QOLDIQ\nNaqd so'm: 1 450 000 so'm\nKarta: 596 000 so'm\nDollar: $50"
         )
         self.assertEqual(self.rows(self.db_path), before)
 
@@ -690,7 +690,7 @@ class DollarExpenseTests(BotTestCase):
         self.assertIn("Karta hisobi so'mda", self.request.messages[-1])
         self.assertFalse(any(m["chat_id"] == kassa.REPORT_CHAT_ID for m in self.request.sent))
         await self.send("Ali 150000")
-        self.assertEqual(kassa.get_balance("UZS", "card"), 350000)
+        self.assertEqual(kassa.get_balance("UZS", "card"), 348500)
         self.assertEqual(kassa.get_balance("USD"), 10000)
 
     async def test_expense_without_dollar_symbol_still_debits_som(self):
@@ -745,7 +745,7 @@ class NotificationTests(BotTestCase):
             "🔴 YANGI XARAJAT\n\nHisob: 💰 Naqd so'm\n"
             "📝 benzin\n➖ 150 000 so'm\n🕐 2026-09-07 15:00:00",
             "🔴 YANGI XARAJAT\n\nHisob: 💳 Karta\n"
-            "📝 Ali\n➖ 200 000 so'm\n🕐 2026-09-07 15:00:00",
+            "📝 Ali\n➖ 202 000 so'm\n🕐 2026-09-07 15:00:00",
         ])
 
     async def test_exchange_statistics_history_and_reset_do_not_send_reports(self):
@@ -823,13 +823,13 @@ class MigrationTests(unittest.TestCase):
                 kassa.add_transaction("income", "UZS", 300000, account="card")
                 kassa.add_card_expense(50000, "Ali")
                 kassa.add_exchange(10000, 1200000)
-                self.assertEqual(kassa.get_balance("UZS", "card"), 250000)
+                self.assertEqual(kassa.get_balance("UZS", "card"), 249500)
                 self.assertEqual(kassa.get_balance("UZS"), 1600000)
                 expenses, totals, balances = kassa.get_statistics()
                 self.assertEqual(len(expenses), 2)
-                self.assertEqual(totals, {"UZS": 150000, "USD": 0})
+                self.assertEqual(totals, {"UZS": 150500, "USD": 0})
                 self.assertEqual(balances, {
-                    ("cash", "UZS"): 1600000, ("card", "UZS"): 250000, ("cash", "USD"): 10000,
+                    ("cash", "UZS"): 1600000, ("card", "UZS"): 249500, ("cash", "USD"): 10000,
                 })
 
 
@@ -888,6 +888,8 @@ class NoOverdraftTests(BotTestCase):
                 try:
                     if employee_payment:
                         kassa.add_employee_payment(employee[0], currency, 80, account)
+                    elif account == "card":
+                        kassa.add_card_expense(80, "")
                     else:
                         kassa.add_transaction("expense", currency, -80, account=account)
                     return True
@@ -896,7 +898,7 @@ class NoOverdraftTests(BotTestCase):
             with ThreadPoolExecutor(max_workers=2) as pool:
                 results = list(pool.map(spend, (False, True)))
             self.assertEqual(sorted(results), [False, True])
-            self.assertEqual(kassa.get_balance(currency, account), 20)
+            self.assertEqual(kassa.get_balance(currency, account), 19 if account == "card" else 20)
 
     async def test_exchange_rechecks_funds_before_saving(self):
         await self.send("💵 $ maydalash")

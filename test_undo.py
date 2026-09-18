@@ -70,7 +70,7 @@ class UndoTests(BotTestCase):
         self.assertIn("Balansda pul yetarli emas", self.request.messages[-1])
         self.assertEqual(self.rows(self.db_path), before)
         self.assertEqual(self.audits(), [])
-        kassa.add_transaction("income", "UZS", 10000, account="card")
+        kassa.add_transaction("income", "UZS", 10100, account="card")
         await self.send(kassa.UNDO_CONFIRM_BUTTON)
         self.assertEqual(kassa.get_balance("UZS", "card"), 0)
         self.assertEqual(len(self.audits()), 1)

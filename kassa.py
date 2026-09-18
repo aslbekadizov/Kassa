@@ -240,6 +240,8 @@ def add_employee_payment(employee_id, currency, amount, account="cash", note="",
         raise ValueError("Noto'g'ri hisob")
     if not 0 < amount <= 9223372036854775807:
         raise ValueError("Summa musbat bo'lsin")
+    if account == "card":
+        amount = card_total(amount)
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("BEGIN IMMEDIATE")
@@ -248,6 +250,7 @@ def add_employee_payment(employee_id, currency, amount, account="cash", note="",
                               "VALUES (?, 'expense', ?, ?, ?, ?, ?)",
                               (now_text(), currency, -amount, note, actor_id, account))
         conn.execute("INSERT INTO employee_payments(transaction_id, employee_id) VALUES (?, ?)", (cursor.lastrowid, employee_id))
+    return amount
 
 
 def add_client(name):
@@ -362,9 +365,15 @@ def require_funds(conn, currency, account, amount):
         raise error(balance)
 
 
+def card_total(amount):
+    # So'm butun son: 1% komissiyani keyingi butun so'mga yaxlitlaymiz.
+    return amount + (amount + 99) // 100
+
+
 def add_card_expense(amount, note, actor_id=None, client_id=None):
     if amount <= 0:
         raise ValueError("Summa musbat bo'lishi kerak")
+    amount = card_total(amount)
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("BEGIN IMMEDIATE")
@@ -375,6 +384,7 @@ def add_card_expense(amount, note, actor_id=None, client_id=None):
             "VALUES (?, 'expense', 'UZS', ?, ?, ?, 'card', ?)",
             (now_text(), -amount, note, actor_id, client_id)
         )
+    return amount
 
 
 def add_exchange(usd_cents, uzs_amount, actor_id=None):
@@ -958,7 +968,7 @@ async def employee_amount(update, context, retry_state=EMPLOYEE_AMOUNT):
         await update.message.reply_text("❌ Summani to'g'ri yozing.", reply_markup=CANCEL_KEYBOARD)
         return retry_state
     try:
-        add_employee_payment(employee[0], currency, amount, account, note, update.effective_user.id)
+        amount = add_employee_payment(employee[0], currency, amount, account, note, update.effective_user.id)
     except InsufficientFunds:
         await update.message.reply_text("❌ Balansda pul yetarli emas.", reply_markup=CANCEL_KEYBOARD)
         return retry_state
@@ -1733,7 +1743,7 @@ async def record_expense(update: Update, context: ContextTypes.DEFAULT_TYPE, acc
 
     try:
         if account == "card":
-            add_card_expense(amount, name, update.effective_user.id, client_id=client[0] if client else None)
+            amount = add_card_expense(amount, name, update.effective_user.id, client_id=client[0] if client else None)
         else:
             add_transaction("expense", currency, -amount, name, update.effective_user.id,
                             client_id=client[0] if client else None)

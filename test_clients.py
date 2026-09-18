@@ -32,7 +32,7 @@ class ClientTests(BotTestCase):
         kassa.add_transaction("income", "UZS", 100000, account="card")
         for button, amount, currency, account, debit in (
             ("💵 Naqd so'm", "1000", "UZS", "cash", 1000),
-            (kassa.CARD_BUTTON, "2000", "UZS", "card", 2000),
+            (kassa.CARD_BUTTON, "2000", "UZS", "card", 2020),
             ("🇺🇸 Dollar", "12.50", "USD", "cash", 1250),
         ):
             before = self.rows(self.db_path)
@@ -109,7 +109,7 @@ class ClientTests(BotTestCase):
         rows, totals = kassa.get_statement(ali[0])
         self.assertEqual(len(rows), 6)
         self.assertEqual(totals, {
-            "UZS": {"income": 700000, "expense": 200000},
+            "UZS": {"income": 700000, "expense": 200500},
             "USD": {"income": 30000, "expense": 1250},
         })
         vali = await self.create_client("Vali")
@@ -120,7 +120,7 @@ class ClientTests(BotTestCase):
         self.assertEqual(kassa.get_statement(ali[0]), (rows, totals))
         self.assertEqual(kassa.get_balance("UZS"), 1800000)
         self.assertEqual(kassa.get_balance("USD"), 38750)
-        self.assertEqual(kassa.get_balance("UZS", "card"), 150000)
+        self.assertEqual(kassa.get_balance("UZS", "card"), 149500)
         self.assertEqual(len(self.rows(self.db_path)), len(self.original_rows) + 8)
         self.assertEqual(len(self.reports()), 8)
         self.assertTrue(all("Mijoz: Ali" in report for report in self.reports()[:6]))
@@ -156,7 +156,7 @@ class ClientTests(BotTestCase):
         self.assertIn("Sinov xarajat", text)
         self.assertNotIn("Mijoz materiali", text)
         self.assertNotIn("Kirim", text)
-        self.assertIn("So'm: 350 000 so'm", text)
+        self.assertIn("So'm: 350 500 so'm", text)
         self.assertIn("Dollar: $5", text)
         await self.open_client(client)
         await self.send(kassa.BACK_BUTTON)
@@ -174,10 +174,10 @@ class ClientTests(BotTestCase):
         self.assertEqual(self.rows(self.db_path), before)
         await self.send("Usta 1$")
         self.assertEqual(self.rows(self.db_path), before)
-        kassa.add_transaction("income", "UZS", 100000, account="card")
+        kassa.add_transaction("income", "UZS", 101000, account="card")
         await self.send(kassa.CARD_BUTTON)
         self.assertEqual(kassa.get_balance("UZS", "card"), 0)
-        self.assertEqual(kassa.get_statement(client[0])[1]["UZS"], {"income": 0, "expense": 100000})
+        self.assertEqual(kassa.get_statement(client[0])[1]["UZS"], {"income": 0, "expense": 101000})
         self.assertEqual(self.request.sent[-2]["reply_markup"], kassa.CLIENT_KEYBOARD.to_dict())
         await self.send("Mayda xarajat 10000")
         await self.send("💵 Naqd so'm")
@@ -356,12 +356,12 @@ class ClientTests(BotTestCase):
         before = self.rows(self.db_path)
         with self.assertRaises(sqlite3.IntegrityError):
             kassa.add_transaction("income", "UZS", 500000, client_id=999)
-        kassa.add_transaction("income", "UZS", 100000, account="card")
+        kassa.add_transaction("income", "UZS", 101000, account="card")
         card_before = self.rows(self.db_path)
         with self.assertRaises(sqlite3.IntegrityError):
             kassa.add_card_expense(100000, "Usta", client_id=999)
         self.assertEqual(self.rows(self.db_path), card_before)
-        self.assertEqual(kassa.get_balance("UZS", "card"), 100000)
+        self.assertEqual(kassa.get_balance("UZS", "card"), 101000)
         self.assertEqual(len(kassa.get_statement(client[0])[0]), 1)
         self.assertEqual(len(before), len(self.original_rows) + 1)
 

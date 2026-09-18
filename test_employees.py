@@ -33,23 +33,23 @@ class EmployeeTests(BotTestCase):
         await self.pay(kassa.CARD_BUTTON, '200000')
         self.assertEqual(kassa.get_balance('UZS'), 1500000)
         self.assertEqual(kassa.get_balance('USD'), 8750)
-        self.assertEqual(kassa.get_balance('UZS', 'card'), 300000)
+        self.assertEqual(kassa.get_balance('UZS', 'card'), 298000)
         self.assertEqual(len(kassa.get_employee_payments(employee[0])), 3)
         self.assertEqual(len(self.reports()), 3)
-        for report, amount in zip(self.reports(), ("100 000 so'm", '$12.50', "200 000 so'm")):
+        for report, amount in zip(self.reports(), ("100 000 so'm", '$12.50', "202 000 so'm")):
             self.assertEqual(f'Aliga {amount} berildi.', report)
             self.assertNotIn('qoldiq', report.lower())
         await self.send('/start', actor_id=kassa.REPORT_CHAT_ID)
         self.assertEqual(self.request.sent[-1]['reply_markup'], kassa.BOSS_KEYBOARD.to_dict())
         await self.select(employee, actor=kassa.REPORT_CHAT_ID)
         text = self.request.messages[-1]
-        self.assertIn("Jami so'm: 300 000 so'm", text)
+        self.assertIn("Jami so'm: 302 000 so'm", text)
         self.assertIn('Dollar: $12.50', text)
         self.assertNotIn('Sinov', text)
         self.assertNotIn('1 500 000', text)
         self.assertNotIn(kassa.EMPLOYEE_PAY_BUTTON, str(self.request.sent[-1]['reply_markup']))
         self.assertEqual(kassa.get_statement()[1]['UZS']['expense'], 100000)
-        self.assertEqual(kassa.get_statistics()[1], {'UZS': 400000, 'USD': 1250})
+        self.assertEqual(kassa.get_statistics()[1], {'UZS': 402000, 'USD': 1250})
         self.assertIn('Xodim: Ali', kassa.get_history()[0][4])
 
     async def test_boss_cannot_create_pay_or_access_other_financial_reports(self):
@@ -101,7 +101,7 @@ class EmployeeTests(BotTestCase):
         await self.pay(kassa.CARD_BUTTON, '100000')
         self.assertIn('yetarli emas', self.request.messages[-1])
         self.assertEqual(self.rows(self.db_path), self.original_rows)
-        kassa.add_transaction('income', 'UZS', 100000, account='card')
+        kassa.add_transaction('income', 'UZS', 101000, account='card')
         await self.send('100000')
         self.assertEqual(kassa.get_balance('UZS', 'card'), 0)
         self.assertEqual(len(kassa.get_employee_payments(employee[0])), 1)

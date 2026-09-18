@@ -153,8 +153,8 @@ dollar xarajatini kiritish uchun `/cancel` bilan asosiy menyuga qayting.
 Karta hisobi so'mda yuritiladi. O'tkazmani bank ilovangizda bajarasiz, keyin botga yozasiz.
 
 1. `💰 Pul oldim` → `💳 Karta` → `500000`: karta qoldig'iga 500 000 so'm qo'shiladi.
-2. `💳 Kartadan` → `Ali 200000`: faqat karta qoldig'idan 200 000 so'm ayiriladi.
-3. Karta qoldig'i 300 000 so'm bo'ladi; naqd so'm va dollar qoldiqlari o'zgarmaydi.
+2. `💳 Kartadan` → `Ali 200000`: 1% komissiya bilan karta qoldig'idan 202 000 so'm ayiriladi.
+3. Karta qoldig'i 298 000 so'm bo'ladi; naqd so'm va dollar qoldiqlari o'zgarmaydi.
 
 Kartadagi mablag' yetarli bo'lmasa, xarajat yozilmaydi. Har bir karta xarajati uchun
 `💳 Kartadan` tugmasini bosing. Saqlangandan keyin bot asosiy menyuga qaytadi.
@@ -237,3 +237,9 @@ Asl yozuvlar va xodimga bog'lanish ma'lumoti `transaction_undo` jadvalida saqlan
 
 `🧾 Boshqa xarajatlar` → `💵 Boshqa dollar xarajat` orqali xarajat nomi
 va dollar miqdorini yozing. Bu rejimda `$` belgisi shart emas.
+
+Kartadan barcha xarajatlarga, jumladan mijoz va xodim to'lovlariga 1% komissiya
+qo'shiladi. Tasdiq, boshliqqa xabar, statistika va mijoz/xodim hisobida jami
+summa ko'rinadi. Komissiya bilan jami mablag' yetmasa xarajat yozilmaydi.
+Kasrli komissiya keyingi butun so'mga yaxlitlanadi. Tranzaksiyani qaytarishda
+komissiya bilan jami pul qaytadi. Eski yozuvlar qayta hisoblanmaydi.
